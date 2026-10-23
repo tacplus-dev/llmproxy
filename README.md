@@ -31,6 +31,22 @@ So, until the private copy consumes this repo:
    per-repo allocation.
 4. `proto/dependencies.yaml` is the Rust and tools pins copied from the platform proto repo.
 
+## Does not generate standalone yet (2026-10-23)
+
+`tacplus build` of this repo alone fails on two checks that assume one generation run holds the
+whole fleet:
+
+1. `LlmProxyState declares (spec.service_state).label "kernel" but no loaded service serves that
+   label` — kernel.proto must be present because kernel serves the state label.
+2. With the platform proto added as a source: `(spec.record) declares residency/mutability but no
+   (spec.trait) hosts a record query plane` for every platform record — an application proto that
+   declares `(spec.trait)` must be present too.
+
+The private copy builds because sonar's `build.sh` merges platform + application + docmanager
+protos into one run. Making a service generate against its own proto plus the sys contract, with
+the kernel build following dependencies, is the first composition requirement (roadmap item
+`tacplus-registry-and-floor`). Until then this repo is the home of record, not the build.
+
 ## Open before this repo can be public
 
 - `crew.proto` (1553 lines) and `pigeon.proto` are Scotty product design, imported for one enum,
