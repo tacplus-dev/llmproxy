@@ -61,9 +61,22 @@ package llmproxy;
 
 import "sys/spec.proto";
 import "sys/mcp.proto";
-import "shared/crew.proto";
 
 option (spec.service) = {name: "llmproxy"};
+
+// BudgetBucket is which lane a turn is charged to. Declared here, locally, so
+// this service carries no product design: it was BudgetBucket, imported
+// from Scotty's crew proto, with these same values. Per issue #1 the lanes
+// themselves do not belong in llmproxy at all and will move to tacplus-
+// generated code in the owning service; until then the proxy keeps the enum
+// (same wire values) and nothing else of the crew model.
+enum BudgetBucket {
+  BUDGET_BUCKET_UNSPECIFIED = 0;
+  BUDGET_BUCKET_DAY_JOB = 1;
+  BUDGET_BUCKET_ABOVE_AND_BEYOND = 2;
+  BUDGET_BUCKET_RESERVE = 3;
+  BUDGET_BUCKET_PERSONAL = 4;
+}
 
 // Config is delivered by kernel at startup and on every change.
 message Config {
@@ -226,7 +239,7 @@ message Usage {
   // (crew runtime §10). Set by GenerateSessionTurn; BUDGET_BUCKET_UNSPECIFIED
   // on a GenerateCompletionAsService response.
   int64 cost_micro_usd = 3;
-  crew.BudgetBucket bucket = 4;
+  BudgetBucket bucket = 4;
   // cache_read_input_tokens: prompt tokens served from the provider's cache,
   // not counted in input_tokens. Set by GenerateSessionTurn.
   int64 cache_read_input_tokens = 5;
@@ -253,7 +266,7 @@ message SessionTurnRequest {
   // model_alias follows the existing alias doctrine (GenerateCompletionRequest).
   string model_alias = 4 [(spec.assert_required) = true];
   // bucket is charged for this turn (crew runtime §10).
-  crew.BudgetBucket bucket = 5 [(spec.assert_enum_defined) = true];
+  BudgetBucket bucket = 5 [(spec.assert_enum_defined) = true];
   // system: standing orders + voice + rules + framing (crew runtime §2.1 step 3).
   string system = 6;
   // messages is the thread's context as the dispatcher holds it (re-primed on
@@ -290,7 +303,7 @@ message SessionTurnResponse {
 message GetBudgetRequest {}
 
 message BucketBalance {
-  crew.BudgetBucket bucket = 1 [(spec.assert_enum_defined) = true];
+  BudgetBucket bucket = 1 [(spec.assert_enum_defined) = true];
   int64 limit_micro_usd = 2;
   int64 spent_micro_usd = 3;
 }

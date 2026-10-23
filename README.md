@@ -24,14 +24,18 @@ So, until the private copy consumes this repo:
 
 1. Headers: `Copyright (c) 2026 Jody Scott`, Apache-2.0 (all open-source work is under Jody's
    name). `tacplus.yaml` `pkg` is `com.github.tacplusdev.llmproxy`; the crate is still `llmproxy-model`.
-2. Proto sources: `src: proto` plus the **private** schematic platform proto as an interim second
-   source, because `LlmProxyState` is served by kernel and generation needs `kernel.proto`.
-   Builds only with access to that repo. Retired when kernel is public or composition lands.
+2. Proto sources: `src: proto` only. The service generates alone against its own proto plus the
+   sys contract tacplus declares (state host label, `sys/servicehealth.proto`, `sys/minter.proto`).
 3. `proto/registry.yaml` is a lock of github.com/tacplus-dev/registry (`global:`), not a
    per-repo allocation.
 4. `proto/dependencies.yaml` is the Rust and tools pins copied from the platform proto repo.
 
-## Does not generate standalone yet (2026-10-23)
+## Generates standalone (2026-10-23, evening)
+
+With tacplus branch `registry-and-floor`, `tacplus build` here needs nothing from any other repo.
+The notes below record what blocked it earlier in the day and how each was resolved.
+
+## Did not generate standalone earlier that day
 
 `tacplus build` of this repo alone fails on two checks that assume one generation run holds the
 whole fleet:
@@ -49,9 +53,9 @@ the kernel build following dependencies, is the first composition requirement (r
 
 ## Open before this repo can be public
 
-- `crew.proto` (1553 lines) and `pigeon.proto` are Scotty product design, imported for one enum,
-  `crew.BudgetBucket`. Publishing them publishes that design. Proposed: a local `BudgetBucket`
-  with the same values and drop the import (a wire-compatible change, four `use` lines in Rust).
+- DONE 2026-10-23 (Jody: *"We wont make the change to sonar just yet. just copy it over to its new home
+  and make all the changes."*): `crew.proto` and `pigeon.proto` are gone; `BudgetBucket` is declared
+  locally with the same values (wire-compatible). Issue #1 still stands for moving the lanes out.
 - `auth_services` names Scotty's services. A fleet-neutral allow-list, or configuration, is needed
   before another fleet can use this.
 - `GenerateCompletionRequest` has no output-schema field; doppelganger needs schema-constrained

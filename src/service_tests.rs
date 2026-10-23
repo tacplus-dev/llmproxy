@@ -31,7 +31,7 @@ use llmproxy_model::types::services::llmproxy::llmproxy::{
     SessionTurnResponse, StopReason, ToolSpec,
 };
 use llmproxy_model::types::services::llmproxy::helpers::config_defaults;
-use llmproxy_model::types::shared::crew::crew::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 use llmproxy_model::types::sys::accounting::accounting::Event;
 use llmproxy_model::types::sys::mcp::McpResponse;
 

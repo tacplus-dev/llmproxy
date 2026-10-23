@@ -20,7 +20,7 @@ use llmproxy_model::types::services::llmproxy::llmproxy::{
     GenerateCompletionResponse, GetBudgetRequest, GetBudgetResponse, ListModelsRequest,
     ListModelsResponse, Message as ProtoMessage, SessionTurnRequest, SessionTurnResponse,
 };
-use llmproxy_model::types::shared::crew::crew::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 use llmproxy_model::types::sys::healthreport::healthreport::InstanceStatus;
 
 use crate::anthropic::{

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use llmproxy_model::types::services::llmproxy::llmproxy::Config as LlmProxyConfig;
-use llmproxy_model::types::shared::crew::crew::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 

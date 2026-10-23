@@ -14,7 +14,7 @@ use llmproxy_model::types::services::llmproxy::llmproxy::{
     SessionTurnRequest, SessionTurnResponse, StopReason, ToolResult as ProtoToolResult,
     ToolUse as ProtoToolUse, Usage as ProtoUsage,
 };
-use llmproxy_model::types::shared::crew::crew::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 
 use crate::anthropic::{
     session_user_id, to_wire_messages, ReplyBlock, TurnReply, WireMessage, WireToolResult,
