@@ -654,7 +654,7 @@ async fn an_exhausted_bucket_stops_the_turn_and_shows_in_get_budget() {
 
 #[test]
 fn no_session_id_rides_the_request_and_no_llm_tool_session_rpcs_exist() {
-    let proto = include_str!("../../../proto/services/llmproxy.proto");
+    let proto = include_str!("../proto/services/llmproxy.proto");
     let message = proto
         .split("message SessionTurnRequest {")
         .nth(1)
@@ -862,7 +862,7 @@ async fn the_texas811_review_script_answers_a_completion_with_repair_step() {
 // tacplus's generated pigeon_service_path_for, so changing either side fails here.
 #[test]
 fn auth_services_pigeon_literal_is_the_generated_beagle_pigeon_path() {
-    let proto = include_str!("../../../proto/services/llmproxy.proto");
+    let proto = include_str!("../proto/services/llmproxy.proto");
     let option = proto
         .lines()
         .find(|l| l.trim_start().starts_with("option (spec.service_s2s)"))
