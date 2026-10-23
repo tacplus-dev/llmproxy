@@ -1,0 +1,13 @@
+language: rust
+# Rust crate is <last segment>-model, matching Cargo.toml (llmproxy-model).
+pkg: com.github.tacplusdev.llmproxy
+output-dir: target/generated-sources
+src: proto
+# INTERIM: LlmProxyState is served by kernel, so kernel.proto must be in the
+# source set. Kernel is still in schematic's private platform proto; this builds
+# only with access to it. Goes away when kernel is public / composition lands.
+sources:
+  - https://gitlab.com/seabeam/schematic/platform/proto.git
+header: |
+  Copyright (c) 2026 Jody Scott
+  SPDX-License-Identifier: Apache-2.0

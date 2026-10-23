@@ -1,0 +1,364 @@
+// pigeon — the kinds a dog may ask the coop for, and their bodies.
+//
+// Design record: looper/decisions/pigeons-d27-a32-scotty-slices-2026-10-02.md
+// §1 (A30/A31 pigeon kinds, scotty side). Contract: decisions/persona-
+// contract-2026-09-28.md A30, A31. Coop side (rpcs, PigeonRun/PigeonStep,
+// PigeonLease, the coop.PigeonMessage topic): schematic's
+// a30-a31-pigeons-design-2026-10-02.md.
+//
+// WHAT THIS FILE IS. Coop carries coop.PigeonMessage.body as bytes,
+// "validated against the kind's schema". These messages ARE those schemas: the
+// pigeon runtime and the dog runtime both validate a body with the generated
+// validators of ToPigeon / FromPigeon (tacplus: "ordinary proto validation").
+// The coop never parses them.
+//
+// WHY A TYPES FILE (no records, no service), and why shared/: the same reasons
+// shared/crew.proto states. Several services use these shapes (every dog with a
+// pigeon_allowance, and the pigeon images), so no one service file owns them.
+//
+// A KIND NAME is "<system>.<verb>" (§1.2). The same string appears as coop
+// Config.kinds[].name, crew.PigeonAllowance.task_kinds and PigeonTask.kind.
+// The kinds at MVP and after:
+//   texas811.prepare_ticket   Beagle  script  MVP (fixture site first)
+//   texas811.read_ticket      Beagle  script  MVP (fixture site first)
+//   bidportal.fetch_packet    Tally   model   post-MVP
+//   permitportal.read_status  Beagle  model   post-MVP
+// The per-kind ceilings (deadline, budget, model_mode_allowed) are coop Config,
+// seeded from this repo's services/coop.yaml; they are not declared here.
+//
+// WHAT THIS FILE CANNOT SAY:
+//   - That PigeonTask.kind names the same kind as its `request` arm (§1.8 item
+//     1). No annotation ties a string to a oneof arm; the pigeon runtime checks
+//     it and fails the run FAILURE_CODE_INVALID_TASK.
+//   - That Texas811ReadTicket carries exactly one of draft_id / ticket_number.
+//     Same reason; same check.
+
+syntax = "proto3";
+
+package pigeon;
+
+import "sys/spec.proto";
+
+// ============================================================================
+// 1. Envelope bodies — what travels in coop.PigeonMessage.body, by direction
+// ============================================================================
+
+// One oneof per direction, so a pigeon can never send a dog a Task and a dog
+// can never send a pigeon a Result.
+
+// ToPigeon is the body of a TO_PIGEON message (dog -> pigeon).
+message ToPigeon {
+  oneof body {
+    // task is the first message; repeats are ignored (idempotent on run_id).
+    PigeonTask task = 1;
+    // answer is the reply to a Question.
+    Answer answer = 2;
+    // cancel: stop at the next safe point and return what you have.
+    Cancel cancel = 3;
+  }
+}
+
+// FromPigeon is the body of a FROM_PIGEON message (pigeon -> dog).
+message FromPigeon {
+  oneof body {
+    Progress progress = 1;
+    // question: the pigeon needs a choice the request did not make.
+    Question question = 2;
+    // result is terminal; the pigeon then waits for discard or deadline.
+    PigeonResult result = 3;
+  }
+}
+
+// ============================================================================
+// 2. Task, and the dog's replies to a running pigeon
+// ============================================================================
+
+message PigeonTask {
+  // kind is "<system>.<verb>", e.g. "texas811.prepare_ticket". Must equal the
+  // kind the run was requested with (coop PigeonRun.kind); a mismatch fails.
+  string kind = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // job_id the work is for, echoed in the result for filing.
+  string job_id = 2 [(spec.assert_max_size) = 64];
+  oneof request {
+    Texas811PrepareTicket texas811_prepare_ticket = 10;
+    Texas811ReadTicket texas811_read_ticket = 11;
+    BidPortalFetchPacket bidportal_fetch_packet = 12;
+    PermitPortalReadStatus permitportal_read_status = 13;
+  }
+}
+
+message Answer {
+  string question_id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // choice is one of Question.options[].id, or empty with text for "other".
+  string choice = 2 [(spec.assert_max_size) = 64];
+  string text = 3 [(spec.assert_max_size) = 2000];
+}
+
+message Cancel {
+  string reason = 1 [(spec.assert_max_size) = 500];
+}
+
+// ============================================================================
+// 3. What a running pigeon sends
+// ============================================================================
+
+message Progress {
+  int32 step = 1 [(spec.assert_ge) = 0];
+  RunMode mode = 2 [(spec.assert_enum_defined) = true];
+  // note is one line for the logbook ("county list loaded", "draft saved").
+  string note = 3 [(spec.assert_max_size) = 500];
+}
+
+// Question: the page offers a choice the request does not decide (e.g. two
+// county matches). The pigeon never guesses a field the request names. Script
+// mode asks too (PG7).
+message Question {
+  string question_id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // field is the request field it concerns.
+  string field = 2 [(spec.assert_max_size) = 128];
+  // prompt is scrubbed (§1.5).
+  string prompt = 3 [(spec.assert_max_size) = 1000];
+  repeated Option options = 4 [(spec.assert_max_size) = 32];
+  // snapshot is the page as the pigeon saw it.
+  EvidenceRef snapshot = 5;
+  // answer_by_ms: after this the run ends RESULT_STATUS_NEEDS_ANSWER (PG7:
+  // 5 min after asking by default).
+  int64 answer_by_ms = 6 [(spec.assert_ge) = 0];
+}
+
+message Option {
+  string id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string label = 2 [(spec.assert_max_size) = 500];
+}
+
+enum RunMode {
+  RUN_MODE_UNSPECIFIED = 0;
+  RUN_MODE_SCRIPT = 1;
+  RUN_MODE_MODEL = 2;
+  // MIXED: script with model takeover at one or more steps (§1.7 drift).
+  RUN_MODE_MIXED = 3;
+}
+
+// ============================================================================
+// 4. Result
+// ============================================================================
+
+message PigeonResult {
+  string kind = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  RunMode mode_used = 2 [(spec.assert_enum_defined) = true];
+  ResultStatus status = 3 [(spec.assert_enum_defined) = true];
+  oneof result {
+    Texas811PrepareTicketResult texas811_prepare_ticket = 10;
+    Texas811ReadTicketResult texas811_read_ticket = 11;
+    BidPortalFetchPacketResult bidportal_fetch_packet = 12;
+    PermitPortalReadStatusResult permitportal_read_status = 13;
+  }
+  // evidence: every page/screenshot/download the result relies on (blobstore,
+  // tenant namespace). The dog copies refs onto its own record; never the bytes.
+  repeated EvidenceRef evidence = 4 [(spec.assert_max_size) = 64];
+  // failure is set iff status != OK.
+  Failure failure = 5;
+  // recorded_path: set when any step ran in model mode and the run succeeded
+  // (§1.7). A blob of RecordedStep rows; the promotion input.
+  EvidenceRef recorded_path = 6;
+}
+
+enum ResultStatus {
+  RESULT_STATUS_UNSPECIFIED = 0;
+  RESULT_STATUS_OK = 1;
+  RESULT_STATUS_FAILED = 2;
+  // NEEDS_ANSWER: a Question went unanswered by answer_by_ms.
+  RESULT_STATUS_NEEDS_ANSWER = 3;
+  RESULT_STATUS_CANCELLED = 4;
+}
+
+message Failure {
+  FailureCode code = 1 [(spec.assert_enum_defined) = true];
+  int32 step = 2 [(spec.assert_ge) = 0];
+  // detail is scrubbed (§1.5).
+  string detail = 3 [(spec.assert_max_size) = 2000];
+  // trace: scrubbed step snapshots.
+  EvidenceRef trace = 4;
+}
+
+enum FailureCode {
+  FAILURE_CODE_UNSPECIFIED = 0;
+  // UNRECOGNIZED_PAGE: script mode, and model mode is not allowed for the kind.
+  FAILURE_CODE_UNRECOGNIZED_PAGE = 1;
+  FAILURE_CODE_LOGIN_FAILED = 2;
+  // LEASE_UNAVAILABLE: coop FAILED_PRECONDITION until the lease store exists.
+  FAILURE_CODE_LEASE_UNAVAILABLE = 3;
+  // DOMAIN_BLOCKED: pigeonproxy refused a CONNECT.
+  FAILURE_CODE_DOMAIN_BLOCKED = 4;
+  // PORTAL_REJECTED: the portal's validation message, quoted in detail.
+  FAILURE_CODE_PORTAL_REJECTED = 5;
+  // COMMIT_CONTROL_BLOCKED: the path required actuating a commit control.
+  FAILURE_CODE_COMMIT_CONTROL_BLOCKED = 6;
+  // READBACK_MISMATCH: the §1.6 compare failed.
+  FAILURE_CODE_READBACK_MISMATCH = 7;
+  // SCRUB_FAILED: a snapshot could not be scrubbed and was withheld (§1.5 S7).
+  FAILURE_CODE_SCRUB_FAILED = 8;
+  // INVALID_TASK: the body failed the kind's schema.
+  FAILURE_CODE_INVALID_TASK = 9;
+}
+
+// ============================================================================
+// 5. texas811.* kinds (D8; §1.6)
+// ============================================================================
+
+// Texas811PrepareTicket. Field set from docs/texas811-recon-findings.md §5
+// "Required fields". The pigeon fills the portal form from these; it never
+// invents a value. Prepare ends at a saved portal draft: no pigeon ever
+// actuates Submit (PG2).
+message Texas811PrepareTicket {
+  Texas811TicketType ticket_type = 1 [(spec.assert_enum_defined) = true];
+  // work_type is the portal's "Nature of Work".
+  string work_type = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  // work_start_ms is WorkDate+WorkTime, rendered tenant-local.
+  int64 work_start_ms = 3 [(spec.assert_ge) = 1];
+  string county = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string city = 5 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string street_name = 6 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  string street_address = 7 [(spec.assert_max_size) = 128];
+  string nearest_intersection = 8 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  string marking_instructions = 9 [(spec.assert_required) = true, (spec.assert_max_size) = 2000];
+  string work_done_for = 10 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  // duration is the portal's "Extent".
+  string duration = 11 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  repeated string equipment = 12 [(spec.assert_min_size) = 1, (spec.assert_max_size) = 8, (spec.assert_element_max_size) = 128];
+  bool explosives = 13;
+  bool white_lined = 14;
+  bool directional_boring = 15;
+  bool deeper_than_16_in = 16;
+  // excavator_name is the company (excavator of record); Sonar is the caller,
+  // set by the account itself (terms correction).
+  string excavator_name = 17 [(spec.assert_required) = true, (spec.assert_max_size) = 200];
+  string site_geometry_geojson = 18 [(spec.assert_max_size) = 65536];
+  string remarks = 19 [(spec.assert_max_size) = 2000];
+  string previous_ticket = 20 [(spec.assert_max_size) = 32];
+}
+
+enum Texas811TicketType {
+  TEXAS811_TICKET_TYPE_UNSPECIFIED = 0;
+  // NORMAL is the only type at MVP (PG5): emergency and dig-up stay a
+  // person's phone call.
+  TEXAS811_TICKET_TYPE_NORMAL = 1;
+}
+
+message Texas811PrepareTicketResult {
+  // draft_id is the portal's suspended-ticket id: the prepared ticket lives in
+  // Sonar's state account as a draft until a person submits it.
+  string draft_id = 1 [(spec.assert_max_size) = 64];
+  // entered: field -> value as the portal shows it after entry (read back
+  // from the review page), for the §1.6 compare.
+  map<string, string> entered = 2 [(spec.assert_max_size) = 64];
+  // review_page: screenshot + HTML of the final review step.
+  EvidenceRef review_page = 3;
+  repeated string portal_warnings = 4 [(spec.assert_max_size) = 16, (spec.assert_element_max_size) = 2000];
+}
+
+// Texas811ReadTicket: exactly one of draft_id / ticket_number (checked by the
+// pigeon runtime; see the header).
+message Texas811ReadTicket {
+  string draft_id = 1 [(spec.assert_max_size) = 64];
+  string ticket_number = 2 [(spec.assert_max_size) = 32];
+}
+
+message Texas811ReadTicketResult {
+  string ticket_number = 1 [(spec.assert_max_size) = 32];
+  // status is the portal's word, verbatim.
+  string status = 2 [(spec.assert_max_size) = 128];
+  // fields as filed, for the compare.
+  map<string, string> fields = 3 [(spec.assert_max_size) = 64];
+  repeated PositiveResponse responses = 4 [(spec.assert_max_size) = 64];
+  bool all_responded = 5;
+  int64 good_until_ms = 6 [(spec.assert_ge) = 0];
+}
+
+message PositiveResponse {
+  string utility = 1 [(spec.assert_max_size) = 200];
+  string code = 2 [(spec.assert_max_size) = 64];
+  string comment = 3 [(spec.assert_max_size) = 2000];
+  int64 responded_ms = 4 [(spec.assert_ge) = 0];
+}
+
+// ============================================================================
+// 6. Post-MVP kinds (shape only)
+// ============================================================================
+
+message BidPortalFetchPacket {
+  string start_url = 1 [(spec.assert_max_size) = 2048];
+  string bid_reference = 2 [(spec.assert_max_size) = 128];
+  repeated string expected_documents = 3 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 500];
+}
+
+message BidPortalFetchPacketResult {
+  repeated EvidenceRef documents = 1 [(spec.assert_max_size) = 64];
+  int64 due_ms = 2 [(spec.assert_ge) = 0];
+  repeated string addenda = 3 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 500];
+}
+
+message PermitPortalReadStatus {
+  string jurisdiction = 1 [(spec.assert_max_size) = 128];
+  string permit_number = 2 [(spec.assert_max_size) = 64];
+}
+
+message PermitPortalReadStatusResult {
+  string status = 1 [(spec.assert_max_size) = 128];
+  repeated string inspections = 2 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 500];
+  int64 expires_ms = 3 [(spec.assert_ge) = 0];
+}
+
+// ============================================================================
+// 7. Evidence and recording (backlog §3.2; §1.7)
+// ============================================================================
+
+// EvidenceRef points at one blob the pigeon captured (blobstore, tenant
+// namespace). Declared here and imported by crew, beagle and tally.
+message EvidenceRef {
+  string blob_id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  string sha256 = 2 [(spec.assert_max_size) = 64];
+  string content_type = 3 [(spec.assert_max_size) = 128];
+  // source_url is scrubbed of query secrets (§1.5 S5).
+  string source_url = 4 [(spec.assert_max_size) = 2048];
+  int64 captured_ms = 5 [(spec.assert_ge) = 0];
+  string pigeon_run_id = 6 [(spec.assert_max_size) = 32];
+  EvidenceKind kind = 7 [(spec.assert_enum_defined) = true];
+}
+
+enum EvidenceKind {
+  EVIDENCE_KIND_UNSPECIFIED = 0;
+  EVIDENCE_KIND_PAGE = 1;
+  EVIDENCE_KIND_SCREENSHOT = 2;
+  EVIDENCE_KIND_DOWNLOAD = 3;
+  EVIDENCE_KIND_RECORDED_PATH = 4;
+}
+
+// RecordedStep is one model-mode action, stored as a row in the recorded_path
+// blob (§1.7). Values are REFERENCES to request fields or credential names,
+// never literals, so the promoted script is generic and holds no secret.
+message RecordedStep {
+  int32 step = 1 [(spec.assert_ge) = 0];
+  // url_pattern is the path with ids replaced by placeholders.
+  string url_pattern = 2 [(spec.assert_max_size) = 2048];
+  // landmark is the role+name that identified the page.
+  string landmark = 3 [(spec.assert_max_size) = 500];
+  ActionKind action = 4 [(spec.assert_enum_defined) = true];
+  // target_role / target_name: the accessibility role and accessible name.
+  string target_role = 5 [(spec.assert_max_size) = 64];
+  string target_name = 6 [(spec.assert_max_size) = 500];
+  // css_fallback is the last-resort selector.
+  string css_fallback = 7 [(spec.assert_max_size) = 1000];
+  // value_ref: "request.county" | "credential:texas811" | "const:<literal>".
+  string value_ref = 8 [(spec.assert_max_size) = 500];
+}
+
+enum ActionKind {
+  ACTION_KIND_UNSPECIFIED = 0;
+  ACTION_KIND_NAVIGATE = 1;
+  ACTION_KIND_CLICK = 2;
+  ACTION_KIND_FILL = 3;
+  ACTION_KIND_SELECT = 4;
+  ACTION_KIND_WAIT_FOR = 5;
+  ACTION_KIND_FILL_CREDENTIAL = 6;
+}

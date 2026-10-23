@@ -1,0 +1,40 @@
+[package]
+name = "llmproxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+llmproxy-model = { path = "target/generated-sources/model" }
+servicemanager = { path = "target/generated-sources/model/chassis/servicemanager" }
+logger = { path = "target/generated-sources/model/chassis/logger" }
+# The scripted stand-in matches a caller's SPIFFE ID against tenant ids (src/scripted.rs).
+spiffe = { path = "target/generated-sources/model/chassis/spiffe" }
+tokio = { version = "1", features = ["full"] }
+tonic = { version = "0.14", features = ["transport"] }
+tracing = "0.1"
+async-trait = "0.1"
+# Anthropic HTTP client — moved here from services/scotty/src/llm.rs 2026-09-15,
+# same reasoning that file gave for reqwest directly (see this crate's src/anthropic.rs):
+# Anthropic's wire shape is not something we author as our own proto message, so
+# tacplus's typed-http-client codegen (which is typed against OUR OWN proto
+# packages, not arbitrary third-party JSON) is the wrong tool here. Same reqwest
+# feature set already used elsewhere in the platform (oauth/gateway/saml).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "rustls-tls-webpki-roots", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# scripts/<name>.yaml, the harness-scripted stand-in's data files (src/scripted.rs).
+serde_yaml = "0.9"
+# BrokerToolCallback's outbound frames (ReceiverStream) and inbound reads.
+tokio-stream = "0.1"
+# Anthropic metadata.user_id is a hash of the session id (backlog §1.4).
+sha2 = "0.10"
+
+[dev-dependencies]
+token = { path = "target/generated-sources/model/chassis/token" }
+key = { path = "target/generated-sources/model/chassis/key" }
+am = { path = "target/generated-sources/model/chassis/am" }
+# pigeon_service_path_for, the generated helper the proto's pigeon literal is pinned to.
+grpcserver = { path = "target/generated-sources/model/chassis/grpcserver" }
+# Mock Anthropic Messages API and mock WIF token endpoint in tests.
+axum = "0.8"
+tokio-stream = { version = "0.1", features = ["net"] }

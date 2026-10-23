@@ -1,0 +1,14 @@
+# texas811-review — the model driver's answer for the fixture's renamed review
+# step: one repair_step tool_use in the shape pigeons/texas811/host/src/model.rs
+# asks for (landmark [role, accessible name]; actions of action/target_role/
+# target_name), the same repair pigeons/texas811/test_pigeon.py's REPAIRS["review"]
+# stands in for.
+turns:
+  - tool_use:
+      name: repair_step
+      input:
+        landmark: ["heading", "Review"]
+        actions:
+          - action: click
+            target_role: button
+            target_name: Save Draft

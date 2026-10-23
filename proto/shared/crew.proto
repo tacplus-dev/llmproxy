@@ -1,0 +1,1553 @@
+// crew — the shapes every dog in the crew shares.
+//
+// The crew runtime (decisions/crew-runtime-design-2026-09-28.md, its
+// .sketch.proto and .questions.md) made real: the persona definition, the event
+// envelope and cursor, run checkpoints, waits, cross-dog commands and moves,
+// tool-call outcomes, reports, and the company-structure record with its
+// delegable grants and budget buckets. Contract: decisions/persona-contract-
+// 2026-09-28.md, amendments A1-A28. Answers: decisions/dog-questions-answers-
+// 2026-09-29.md.
+//
+// WHY A TYPES FILE AND NOT A SERVICE (questions Q3, ask T4). These records are
+// written by several services — every persona service — so no one service file
+// owns them. A (spec.service) file named `crew` would declare a service with no
+// process. The platform's own shared types live the same way (platform/proto/
+// common/credentials.proto, hazelcast.proto): a file with no service identity,
+// imported by the services that use it.
+//
+// WHY shared/ AND NOT common/. At tacplus 18e551be the Java generator registers
+// every common/*.proto twice — once in its general module loop and again as an
+// "embedded common proto" (pkg/internal/java/types/generator.go, the loop at
+// `commonDir := filepath.Join(protoDir, "common")`) — so a record declared
+// under common/ has its <T>Bus topic collected twice and every Java service
+// (eventbus, kernel, stratum) fails with `duplicate EventBus topic_ref
+// "crew.CrewEventBus.stream" in common/crew.proto and common/crew.proto`. The
+// platform's common/ files carry no records, which is why it never showed.
+// Reported as a generator gap; common/ is tacplus's embedded-runtime directory
+// in any case, and this is app data.
+//
+// tacplus
+// generates each record's <T>Bus topic into this package (crew.<T>Bus.stream),
+// and each persona service publishes to it from its own Config
+// (spec.event_publish), exactly as gateway publishes agentsensor's topic.
+// TODO(Q3): tacplus has not said this is THE home for multi-producer records;
+// if it rules that a record needs one owning service, these move to the Scotty
+// persona's service with every dog as a producer (Q3's fallback).
+//
+// WHO IS NAMED IN THE GRANTS. Only persona services that exist in this build:
+// beagle, otto and tally (proto/services/{beagle,otto,tally}.proto). tacplus
+// does not check auth_services names against real services, so naming a dog
+// that has no service yet would be a grant nothing can be held to, and naming
+// `reveille` would grant docmanager's reveille — which is DOT's code until the
+// rename (plan P12, Q7) — a read of every crew record. Each dog is added to
+// these lists in the change that declares its service (CP2). TODO(Q7): the
+// executive Reveille and Dot join after P12; barry, sarge and frank join when
+// their protos land. The Scotty persona's host, the tenant-owned `scotty`
+// service (DI2, mvp-plan 'M1 decisions'), is named on ThreadMapEntry and
+// LogbookEntry, the two records the M1 dispatcher path writes.
+//
+// THE JOB DECOMPOSITION (A4): Job (Sarge), JobDocuments (Dot), JobPermits
+// (Beagle), JobEquipment (Otto), JobBid (Tally), keyed by job id, each in its
+// owner's package. JobPermits, JobEquipment and JobBid are declared in
+// services/{beagle,otto,tally}.proto.
+// TODO(CP1, Q7): dot.JobDocuments waits for the Reveille->Dot rename (P12):
+// Dot's code is docmanager's `reveille` service today, and a second `dot`
+// service here would collide with the rename.
+// TODO(CP5, SG9): the Job piece IS work.Job; making Sarge its only dog writer
+// (auth_actors on the create rpc, SetMyJobSchedule, create idempotent on
+// thread_id per A5) is a work.proto change for Sarge's proto, not made here.
+//
+// WHAT THIS FILE CANNOT SAY, AND DOES NOT HAND-ROLL (generator gaps):
+//   - T1 (spec.persona). PersonaDefinition below is the type the annotation
+//     would carry; there is no ServiceOptions extension to attach it with, so
+//     no dog declares one yet. The `extend` is not written here: a field
+//     number in spec.proto's range is tacplus's to assign.
+//   - T6/S7 publish envelope. The idempotency key (dog, tenant, event_seq,
+//     step) and the fencing token (epoch, counter) ride in the PUBLISH
+//     envelope that tacplus generates and stratum checks (A1, A2). They are
+//     deliberately not columns on every record (TODO(CP6)). What the runtime itself keeps
+//     of them is here: RunCheckpoint's key IS the idempotency key, and
+//     CrewCursor keeps the last lease token for recovery.
+//   - T6 retention class. (spec.record).retention is retired in spec.proto, so
+//     each record states its class in a "RETENTION:" comment (the proposed
+//     classes are in the design record §15).
+//   - T7 message threading. thread_id, causation_id and hop_count are carried
+//     here as the runtime copies them; the room transport carrying them on
+//     every message is messaging/scottypersonal's change.
+//
+// Every topic, publisher, subscriber, record reader and egress filter these
+// records need is what tacplus generates from the annotations below.
+
+syntax = "proto3";
+
+package crew;
+
+import "sys/spec.proto";
+import "shared/pigeon.proto";
+
+// ============================================================================
+// 1. PersonaDefinition — the build-time dog (contract §4, A16; ask T1)
+// ============================================================================
+
+// PersonaDefinition is one dog, fixed at build time. A change is a release; a
+// dog is the same dog in every company. Tenant policy (budgets, rooms,
+// escalation, rules) is CompanyStructure and CrewRule, never this.
+message PersonaDefinition {
+  // name is the dog's name as people say it ("Barry"). Unique fleet-wide.
+  // Proper names never translate (D20): Reveille is always Reveille.
+  string name = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+
+  // species is presentation only. FIXED, and so is the art (A16).
+  string species = 2 [(spec.assert_max_size) = 64];
+
+  // scope is who one logical instance belongs to: TENANT for the eight company
+  // dogs, PERSON for Scotty (contract §1).
+  PersonaScope scope = 3 [(spec.assert_enum_defined) = true];
+
+  // voice is the style paragraph of the system prompt. 8192: Scotty's voice is
+  // its whole character prompt (services/scotty/src/persona.rs, ~4.5 KB).
+  string voice = 4 [(spec.assert_max_size) = 8192];
+
+  // standing_orders are the ONLY instructions the dog ever receives (§10).
+  // Every persona carries the "functional-tools" order (A29; see StandingOrder).
+  repeated StandingOrder standing_orders = 5 [(spec.assert_max_size) = 64];
+
+  // tools is the dog's tool list. The model is offered
+  //   { tools here, minus needs_thumb } ∩ { rpcs the dog's delegate may call }
+  //                                     ∩ { capability_manifest }
+  // fail-closed (A14, A16; ask T2). The runtime's own tools are implicit.
+  repeated ToolGrant tools = 6 [(spec.assert_max_size) = 128];
+
+  // triggers are what wake this dog; under T1 each becomes a generated
+  // (spec.subscribe).
+  repeated Trigger triggers = 7 [(spec.assert_max_size) = 64];
+
+  // 8 model_alias, 9 daily_token_budget, 10 max_wait_seconds: withdrawn in the
+  // sketch (A3, A11, A16). The model follows the run's budget bucket; budgets
+  // are tenant policy in dollars on CompanyStructure; waits are records.
+  reserved 8, 9, 10;
+  reserved "model_alias", "daily_token_budget", "max_wait_seconds";
+
+  // 11 acts_for_external: withdrawn by A32. Any dog answers a qualified
+  // cross-org mention; what it may disclose is the disclosure policy's call.
+  reserved 11;
+  reserved "acts_for_external";
+
+  // capability_manifest is what the dog can do HERE TODAY and who to ask
+  // instead (A14). The runtime gates tools and routing on the same list.
+  repeated Capability capability_manifest = 12 [(spec.assert_max_size) = 64];
+
+  // owned_record_types / readable_record_types are proto full names (A4,
+  // A16), e.g. "beagle.JobPermits". Owned = the one writer by type.
+  repeated string owned_record_types = 13 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 256];
+  repeated string readable_record_types = 14 [(spec.assert_max_size) = 128, (spec.assert_element_max_size) = 256];
+
+  // wake_words wake this dog on an UNADDRESSED line (A5). At most two dogs
+  // wake per line, decided once at fan-out (Q17). A wake-word wake never
+  // replies (A8).
+  repeated string wake_words = 15 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 64];
+
+  // proposal_kinds: the needs_thumb tools this dog may file as a Proposal
+  // (scotty.Ticket, extended; A10).
+  repeated string proposal_kinds = 16 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 256];
+
+  // wait_allowlist is what wait_for may wait on (A3).
+  repeated WaitKind wait_allowlist = 17 [(spec.assert_max_size) = 8];
+
+  // scripted_routines run WITHOUT the model (A20).
+  repeated ScriptedRoutine scripted_routines = 18 [(spec.assert_max_size) = 16];
+
+  // version_hash is generated from this definition (T1) and carried by every
+  // ToolCallOutcome (A16, A26). Never written by hand.
+  string version_hash = 19 [(spec.assert_max_size) = 64];
+
+  // pigeon_allowance is what this dog may ask the coop for (A30). Unset = no
+  // pigeons: request_pigeon is absent from the dog's tools (T2 intersection).
+  // Only Tally and Beagle carry one at MVP.
+  PigeonAllowance pigeon_allowance = 20;
+
+  // pitch is what the dog says about itself in the crew's product pitch
+  // (parking lot P-2026-10-09-1; decisions/crew-product-pitch-2026-10-09.md):
+  // one or two sentences in its own voice (Scotty, who opens, says more),
+  // posted as-is with no model in the path. Build-time like the rest of the
+  // definition, so a dog's words change only in a release, and in one place.
+  string pitch = 21 [(spec.assert_max_size) = 2048];
+}
+
+// PigeonAllowance is the build-time CEILING on a dog's pigeon requests (A30;
+// backlog-scotty-slices §3.1). A tenant rule may only narrow it (A16,
+// fail-closed). The runtime pre-checks a request against it; the coop and its
+// network policy are the enforcement.
+message PigeonAllowance {
+  // allowed_domains: a request's allowed_domains must be a subset.
+  repeated string allowed_domains = 1 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 253];
+  // max_budget_micro_usd per request (default $0.50).
+  int64 max_budget_micro_usd = 2 [(spec.default_int) = 500000, (spec.assert_ge) = 0];
+  // max_deadline_ms per request (default 15 min).
+  int64 max_deadline_ms = 3 [(spec.default_int) = 900000, (spec.assert_ge) = 0];
+  // max_concurrent pigeons per dog per tenant.
+  int32 max_concurrent = 4 [(spec.default_int) = 2, (spec.assert_ge) = 0];
+  // task_kinds the dog may request, as "<system>.<verb>" (pigeon.PigeonTask.kind),
+  // e.g. "texas811.prepare_ticket", "bidportal.fetch_packet".
+  repeated string task_kinds = 5 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 64];
+}
+
+enum PersonaScope {
+  PERSONA_SCOPE_UNSPECIFIED = 0;
+  // One logical instance per tenant; pod identity
+  // spiffe://<td>/tenants/<tenant>/services/<dog> ((spec.service).tenant_owned).
+  PERSONA_SCOPE_TENANT = 1;
+  // One logical instance per person in the people tenant (Scotty, Q2).
+  PERSONA_SCOPE_PERSON = 2;
+}
+
+// StandingOrder. Every PersonaDefinition carries the A29 order with id
+// "functional-tools", verbatim (backlog-scotty-slices §2.6):
+//   "Every tool call is a plain function call. Nothing is remembered for you
+//   between calls. When a tool returns a page token, query id, cursor, thread
+//   id or proposal id, you must pass it back yourself in your next call if you
+//   need it. If you leave it out, you start over."
+// TODO(T1): the generate-time check that every (spec.persona) has it waits on
+// T1; until then a crew-runtime unit test enforces it.
+message StandingOrder {
+  // id is cited as the authority of an act. Stable across releases; a changed
+  // meaning takes a new id.
+  string id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string text = 2 [(spec.assert_max_size) = 4000];
+}
+
+message Capability {
+  // can is one thing the dog does here today, in plain words.
+  string can = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 500];
+  // ask_instead is a persona name, or empty for "a person".
+  string ask_instead = 2 [(spec.assert_max_size) = 64];
+}
+
+message ToolGrant {
+  // tool is "<package>.<Rpc>" of an MCP-exposed rpc, e.g. "work.CreateMyTask".
+  // At the fleet pin (tacplus 18e551be) a requires_device rpc is still
+  // auto-exposed to MCP; no persona may list one until the pin includes
+  // c50ca319 (ask T3).
+  string tool = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 256];
+
+  // needs_thumb: the model is NOT offered this tool; it can only file a
+  // Proposal whose payload is this call (§8, §10).
+  bool needs_thumb = 2;
+}
+
+message Trigger {
+  EventSource kind = 1 [(spec.assert_enum_defined) = true];
+
+  // topic_ref for EVENT_SOURCE_RECORD_CHANGE, e.g. "work.JobBus.stream".
+  string topic_ref = 2 [(spec.assert_max_size) = 256];
+
+  // mention_only for EVENT_SOURCE_ROOM_MESSAGE: wake only on an @mention, a DM
+  // or a wake word (A5), not on every line in a room the dog sits in (X2).
+  bool mention_only = 3;
+
+  // bucket pays for runs this trigger starts (A11, Q19).
+  BudgetBucket bucket = 4 [(spec.assert_enum_defined) = true];
+}
+
+// ScriptedRoutine is a fixed dialogue the runtime drives (A20): muster,
+// Barry's checklists. The model only phrases a line or reads a free-text
+// reply.
+message ScriptedRoutine {
+  string name = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  BudgetBucket bucket = 2 [(spec.assert_enum_defined) = true];
+  // templates, one per language. Language is the PERSON's setting (Jody,
+  // 2026-09-29): a person who chose Spanish hears every line in Spanish,
+  // scripted or model. A room-wide scripted post goes once per language
+  // present, English first (X4).
+  repeated RoutineTemplate templates = 3 [(spec.assert_max_size) = 8];
+}
+
+message RoutineTemplate {
+  // lang is a BCP 47 tag: "en", "es".
+  string lang = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 16];
+  repeated string lines = 2 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 2000];
+}
+
+// BudgetBucket: two buckets per dog, accounted separately (A11); the bucket
+// also picks the model class (D3).
+enum BudgetBucket {
+  BUDGET_BUCKET_UNSPECIFIED = 0;
+  BUDGET_BUCKET_DAY_JOB = 1;           // Sonnet-class
+  BUDGET_BUCKET_ABOVE_AND_BEYOND = 2;  // Opus-class
+  BUDGET_BUCKET_RESERVE = 3;           // the tenant's lane: approvals + Barry's safety events
+  BUDGET_BUCKET_PERSONAL = 4;          // Scotty, per person, SeaBeam-funded (A24)
+}
+
+// ============================================================================
+// 2. The event envelope (contract §3) and the cursor (§2)
+// ============================================================================
+
+enum EventSource {
+  EVENT_SOURCE_UNSPECIFIED = 0;
+  // A room message or DM addressed to this dog (a messaging delivery whose
+  // recipient is the dog's principal; Q8).
+  EVENT_SOURCE_ROOM_MESSAGE = 1;
+  // A row of a subscribed record type was written.
+  EVENT_SOURCE_RECORD_CHANGE = 2;
+  // A Scheduler wake-up fired (§5; ask S1).
+  EVENT_SOURCE_SCHEDULE_TICK = 3;
+  // A CrewCommand from another dog, or the reply to one of this dog's (A4).
+  EVENT_SOURCE_CREW_COMMAND = 4;
+  // A decision on a scotty.Ticket this dog filed (A10).
+  EVENT_SOURCE_PROPOSAL_DECISION = 5;
+  // Inbound mail routed to this dog by the tenant's mailbox (D4, D16;
+  // decisions/crew-email-2026-09-29.md).
+  EVENT_SOURCE_EMAIL = 6;
+  // A Wait's deadline passed with no match (A3).
+  EVENT_SOURCE_WAIT_DEADLINE = 7;
+  // A FROM_PIGEON / FROM_COOP message on coop.PigeonMessage for a run this
+  // instance started (A30).
+  EVENT_SOURCE_PIGEON = 8;
+}
+
+// CrewEvent is ONE queued event for ONE logical dog instance. The runtime
+// writes it before it acks the source, so an event is durable here or still
+// on the source topic, never only in process memory (§2.3, A1). A redelivered
+// source is recognised by source_key and not given a second seq.
+//
+// RETENTION: CHAT (90 days working set, archived 1 year) — it carries text.
+message CrewEvent {
+  option (spec.record) = {
+    // "<instance_key>/<seq>".
+    key: "event_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["beagle", "otto", "tally"]}
+    mutability: MUTABILITY_APPEND_ONLY
+    residency: {idle_seconds: 86400}
+  };
+
+  string event_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 600];
+
+  // instance_key is the logical instance: "<dog>" for a TENANT persona (the
+  // tenant is `namespace`), "<dog>/<person>" for Scotty.
+  string instance_key = 2 [
+    (spec.assert_required) = true,
+    (spec.assert_max_size) = 512,
+    (spec.query_field) = {op: QUERY_OP_EQ}
+  ];
+
+  // seq is strictly increasing per instance_key, no gaps once assigned. The
+  // single writer is the dog's pod under its run lease (A2).
+  int64 seq = 3 [(spec.assert_ge) = 1, (spec.query_field) = {op: QUERY_OP_RANGE}];
+
+  EventSource source = 4 [(spec.assert_enum_defined) = true];
+
+  // source_key identifies the source event: a delivery_id, "<record type>/
+  // <key>/<store_epoch>", a scheduler fire id, a decision id, a mail id.
+  string source_key = 5 [
+    (spec.assert_required) = true,
+    (spec.assert_max_size) = 512,
+    (spec.query_field) = {op: QUERY_OP_EQ}
+  ];
+
+  // actor is the principal that caused the event. Empty for a schedule tick.
+  string actor = 6 [(spec.assert_max_size) = 256];
+
+  // actor_is_member is resolved at enqueue against the tenant's memberships.
+  // A fact for the disclosure policy (A32); it does not gate the queue.
+  bool actor_is_member = 7;
+
+  // refs are the job / room / record the event references.
+  repeated Ref refs = 8 [(spec.assert_max_size) = 16];
+
+  // payload is DATA, never instruction (§10, A9): handed to the model only
+  // inside a get_events tool result, rendered as a quoted data region.
+  oneof payload {
+    RoomMessage room_message = 9;
+    RecordChange record_change = 10;
+    ScheduleTick schedule_tick = 11;
+    ProposalDecided proposal_decided = 12;
+    EmailMessage email = 17;
+    CrewCommand crew_command = 18;
+    CrewCommandReply crew_command_reply = 19;
+    ConversationMove conversation_move = 20;
+    PigeonEvent pigeon = 25;
+  }
+
+  int64 occurred_at_ms = 13 [(spec.assert_ge) = 0];
+  int64 enqueued_at_ms = 14 [(spec.assert_ge) = 0];
+
+  string namespace = 15 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 16 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // thread_id of the message this event carries or was caused by (A6).
+  string thread_id = 21 [(spec.assert_max_size) = 128, (spec.query_field) = {op: QUERY_OP_EQ}];
+
+  // causation_id + hop_count (A7): copied from the message that caused this
+  // one with the hop incremented; a human message starts a new chain at 0.
+  // The model is warned past the soft threshold and the chain is parked at the
+  // hard ceiling (runtime Config; Jody: soft 10, hard 50).
+  string causation_id = 22 [(spec.assert_max_size) = 128];
+  int32 hop_count = 23 [(spec.assert_ge) = 0];
+
+  // wait_id is set when this event closes a Wait (A3).
+  string wait_id = 24 [(spec.assert_max_size) = 128];
+
+  // The A32 envelope. 25 is the pigeon payload arm.
+  // actor_name is the actor's crew or person name, rendered "name@tenant".
+  string actor_name = 26 [(spec.assert_max_size) = 128];
+  // actor_tenant is from the actor's SPIFFE tenant, never the body.
+  string actor_tenant = 27 [(spec.assert_max_size) = 256];
+  // orgs_present are the tenants in the room, plus the addressed org.
+  repeated string orgs_present = 28 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 256];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 29 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+message Ref {
+  RefKind kind = 1 [(spec.assert_enum_defined) = true];
+  // record_type is the proto full name for REF_KIND_RECORD, e.g. "work.Permit".
+  string record_type = 2 [(spec.assert_max_size) = 256];
+  string id = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 512];
+}
+
+enum RefKind {
+  REF_KIND_UNSPECIFIED = 0;
+  REF_KIND_JOB = 1;     // work.Job
+  REF_KIND_ROOM = 2;    // scottypersonal.Chat
+  REF_KIND_RECORD = 3;  // any other record, named by record_type
+  REF_KIND_PIGEON_RUN = 4;  // coop PigeonRun, by run_id
+}
+
+message RoomMessage {
+  string room_id = 1 [(spec.assert_max_size) = 600];
+  string delivery_id = 2 [(spec.assert_max_size) = 512];
+  string sender = 3 [(spec.assert_max_size) = 256];
+  // text is UNTRUSTED (A9).
+  // TODO(CP4): for a person<->Scotty conversation this stays EMPTY — those
+  // conversations are never logged (Jody, 2026-09-29); Scotty reads the text
+  // from the person's own private chat rows at run time.
+  string text = 4 [(spec.assert_max_size) = 16384];
+  // is_direct: a DM rather than a room message.
+  bool is_direct = 5;
+  // addressed: the dog was @-mentioned or DM'd, so the message earns a reply.
+  // False = woken by a wake word: act silently and log (A5, A8).
+  bool addressed = 6;
+}
+
+// EmailMessage is one inbound mail the tenant's mailbox routed to this dog
+// (decisions/crew-email-2026-09-29.md). UNTRUSTED (A9). The company has ONE
+// address; the dog was chosen by the thread token, a plus-address hint or the
+// classifier, never by a per-dog address.
+// TODO(FD-8): per-dog email is open (the crew-email decision); nothing here
+// names a dog's own address.
+message EmailMessage {
+  string mail_id = 1 [(spec.assert_max_size) = 256];
+  string from = 2 [(spec.assert_max_size) = 512];
+  string subject = 3 [(spec.assert_max_size) = 1000];
+  string text = 4 [(spec.assert_max_size) = 65536];
+  // mail_thread_token is the +t.<thread> token the reply came back on; empty
+  // for genuinely new mail.
+  string mail_thread_token = 5 [(spec.assert_max_size) = 128];
+  // auto_submitted: the mail declared itself automated (Auto-Submitted other
+  // than "no", Precedence bulk/junk/list, or our own agent header). The
+  // runtime never replies to such a mail (loop protection).
+  bool auto_submitted = 6;
+}
+
+// CrewCommand is a typed request from one dog to the dog that owns a record
+// type (A4): "change your record this way". Sent in the open room; the owner
+// fulfils or declines on its own record. No field-level rights machinery.
+message CrewCommand {
+  string command_id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  string from_dog = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string to_dog = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // record_type + record_key: the target, e.g. "beagle.JobPermits" + job id.
+  string record_type = 4 [(spec.assert_max_size) = 256];
+  string record_key = 5 [(spec.assert_max_size) = 512];
+  // read_version is the version the sender read (A4 optimistic versions).
+  int64 read_version = 6 [(spec.assert_ge) = 0];
+  // verb is one of the owning dog's command verbs ("add_permit").
+  string verb = 7 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // args_json: JSON because the verbs are per owner and a oneof over every
+  // dog's verbs would make this file import the crew (Q6's reasoning).
+  string args_json = 8 [(spec.assert_max_size) = 16384];
+  string room_id = 9 [(spec.assert_max_size) = 600];
+}
+
+enum CrewCommandResult {
+  CREW_COMMAND_RESULT_UNSPECIFIED = 0;
+  CREW_COMMAND_RESULT_FULFILLED = 1;
+  CREW_COMMAND_RESULT_DECLINED = 2;
+}
+
+// CrewCommandReply is the owner's answer, in the same thread.
+message CrewCommandReply {
+  string command_id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  CrewCommandResult result = 2 [(spec.assert_enum_defined) = true];
+  // new_version of the owner's record after a fulfilment.
+  int64 new_version = 3 [(spec.assert_ge) = 0];
+  string reason = 4 [(spec.assert_max_size) = 2000];
+}
+
+// ConversationMove is the typed "moving this to …" (A6). Rendered as that
+// line; the chat's CHAT_EVENT_KIND_MOVED_OUT event still records the move.
+message ConversationMove {
+  string from_room_id = 1 [(spec.assert_max_size) = 600];
+  string to_room_id = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 600];
+  string thread_id = 3 [(spec.assert_max_size) = 128];
+  string reason = 4 [(spec.assert_max_size) = 1000];
+}
+
+// PigeonDirection is the inbound half of coop.PigeonMessage's direction. Only
+// these two become a CrewEvent; a dog's own TO_PIGEON messages never do.
+enum PigeonDirection {
+  PIGEON_DIRECTION_UNSPECIFIED = 0;
+  PIGEON_DIRECTION_FROM_PIGEON = 1;
+  PIGEON_DIRECTION_FROM_COOP = 2;
+}
+
+// PigeonEvent is one coop.PigeonMessage for a run this instance started
+// (A30). The thread is CrewEvent.thread_id: the pigeon thread, an ordinary
+// ThreadMapEntry. body is DATA (A9). A FROM_COOP PIGEON_GONE or ENDED closes
+// any wait_for on the thread.
+message PigeonEvent {
+  string run_id = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 32];
+  PigeonDirection direction = 2 [(spec.assert_enum_defined) = true];
+  // body is set for FROM_PIGEON.
+  pigeon.FromPigeon body = 3;
+  // error_code / error_detail are set for FROM_COOP, e.g. "PIGEON_GONE" /
+  // "discarded".
+  string error_code = 4 [(spec.assert_max_size) = 64];
+  string error_detail = 5 [(spec.assert_max_size) = 2000];
+}
+
+// RecordChange carries a written row as record_type + key + proto3 JSON (Q6).
+message RecordChange {
+  string record_type = 1 [(spec.assert_max_size) = 256];
+  string record_key = 2 [(spec.assert_max_size) = 512];
+  string record_json = 3 [(spec.assert_max_size) = 65536];
+}
+
+message ScheduleTick {
+  // wakeup_id is the Scheduler's id for the registration that fired.
+  string wakeup_id = 1 [(spec.assert_max_size) = 256];
+  // tag is the registration's name, keyed (dog, tenant, name) (A18): "muster",
+  // "wait:<wait_id>", "proposal-expiry:<ticket_id>", "permit-expiry:<id>".
+  string tag = 2 [(spec.assert_max_size) = 256];
+  int64 due_at_ms = 3 [(spec.assert_ge) = 0];
+}
+
+// ProposalDecided points at the scotty.Ticket and its decision (A10).
+message ProposalDecided {
+  string ticket_id = 1 [(spec.assert_max_size) = 128];
+  string decision_id = 2 [(spec.assert_max_size) = 128];
+  ProposalState state = 3 [(spec.assert_enum_defined) = true];
+}
+
+// ProposalState — the Ticket is immutable once filed (A10); only its state
+// moves. Expired and revoked are the Q26 additions to scotty's outcomes.
+enum ProposalState {
+  PROPOSAL_STATE_UNSPECIFIED = 0;
+  PROPOSAL_STATE_OPEN = 1;
+  PROPOSAL_STATE_APPROVED = 2;
+  PROPOSAL_STATE_DECLINED = 3;
+  PROPOSAL_STATE_EXPIRED = 4;
+  PROPOSAL_STATE_REVOKED = 5;  // by the filer, or stale at execution
+}
+
+// CrewCursor is one row per logical instance: scottyagent.AgentCursor
+// generalized. Queued = done_through_seq < seq < next_seq.
+// RETENTION: follows CHAT (runtime bookkeeping).
+message CrewCursor {
+  option (spec.record) = {
+    key: "instance_key"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["beagle", "otto", "tally"]}
+    residency: {idle_seconds: 604800}
+  };
+
+  // instance_key is the KEY and the only criterion (scottyagent-record-shapes
+  // D2: a second criterion loses the point read).
+  string instance_key = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 512];
+
+  // next_seq is the seq the next enqueued event will take.
+  int64 next_seq = 2 [(spec.assert_ge) = 1];
+
+  // done_through_seq is the highest seq acknowledged by `done`. It is written
+  // AFTER the step checkpoints, never with them (A1). Under A29 acks are per
+  // thread (ThreadMapEntry.done_through_seq) and this is their LOW-WATER MARK
+  // over live threads (lowest un-acked seq minus one), used only by restart
+  // recovery.
+  int64 done_through_seq = 3 [(spec.assert_ge) = 0];
+
+  // parked_until_ms is set when the budget parks the queue (A11): events keep
+  // queueing, nothing is re-delivered, no run starts before this time
+  // (tenant-local midnight), and catch-up is one compacted run.
+  int64 parked_until_ms = 4 [(spec.assert_ge) = 0];
+
+  // fence_epoch / fence_counter: the last run lease's token (A2). Stratum is
+  // the guard (high-water mark per lock name, ask S7); this copy is for
+  // recovery and inspection.
+  int64 fence_epoch = 5 [(spec.assert_ge) = 0];
+  int64 fence_counter = 6 [(spec.assert_ge) = 0];
+
+  int64 updated_at_ms = 7 [(spec.assert_ge) = 0];
+  string last_instance_id = 8 [(spec.assert_max_size) = 256];
+
+  string namespace = 9 [(spec.store_namespace) = true, (spec.assert_max_size) = 256];
+  string spiffe_id = 10 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 11 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// RunCheckpoint records one completed step, written after stratum acked the
+// step's publish (A1, design §13.1). Its key IS the idempotency key
+// (dog, tenant, event_seq, step): "<instance_key>/<event_seq>/<step>" in the
+// row's namespace. A replay serves a matching call (same tool, same
+// request_sha256) from here instead of calling again (Q20).
+// RETENTION: follows CHAT.
+message RunCheckpoint {
+  option (spec.record) = {
+    key: "checkpoint_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["beagle", "otto", "tally"]}
+    mutability: MUTABILITY_APPEND_ONLY
+    residency: {idle_seconds: 86400}
+  };
+
+  string checkpoint_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 600];
+  string instance_key = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 512, (spec.query_field) = {op: QUERY_OP_EQ}];
+  int64 event_seq = 3 [(spec.assert_ge) = 1, (spec.query_field) = {op: QUERY_OP_EQ}];
+  int32 step = 4 [(spec.assert_ge) = 1];
+  string tool = 5 [(spec.assert_max_size) = 256];
+  string request_sha256 = 6 [(spec.assert_max_size) = 64];
+  string result_json = 7 [(spec.assert_max_size) = 65536];
+  ToolOutcomeClass outcome = 8 [(spec.assert_enum_defined) = true];
+  string run_id = 9 [(spec.assert_max_size) = 128];
+
+  string namespace = 10 [(spec.store_namespace) = true, (spec.assert_max_size) = 256];
+  string spiffe_id = 11 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 12 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// ============================================================================
+// 2a. Threads (A29): the thread map and the runtime's room tools
+// ============================================================================
+
+enum ThreadState {
+  THREAD_STATE_UNSPECIFIED = 0;
+  THREAD_STATE_LIVE = 1;
+  // AGED_OUT: the session worker dropped its context (idle past the runtime's
+  // thread_idle_ms, or evicted LRU past max_live_threads). A message to it
+  // revives it as a new thread with parent_thread_id = this one (§2.4).
+  THREAD_STATE_AGED_OUT = 2;
+}
+
+// ThreadMapEntry is one thread of one logical instance (A29; backlog-scotty-
+// slices §2.2). The dispatcher routes each CrewEvent by thread_id to that
+// thread's session worker; this row is what survives the worker. A pigeon's
+// private thread is an ordinary entry (room_ref = the pigeon thread, A30).
+// Queued for thread T = events with thread_id T and seq > T.done_through_seq.
+// RETENTION: OPERATIONAL (BQ10).
+message ThreadMapEntry {
+  option (spec.record) = {
+    // "<instance_key>/<thread_id>", a point read.
+    key: "key"
+    owner: "spiffe_id"
+    // scotty hosts the Scotty persona's dispatcher (DI2).
+    s2s: {auth_services: ["scotty", "beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty", "beagle", "otto", "tally"]}
+    residency: {idle_seconds: 604800}
+  };
+
+  string key = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 650];
+  // instance_key as on CrewCursor.
+  string instance_key = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 512, (spec.query_field) = {op: QUERY_OP_EQ}];
+  // thread_id in the A29 format t_<created_ms base36>_<16 hex> (§2.3, BQ8).
+  string thread_id = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 128];
+  // parent_thread_id: set when this thread revived an aged-out one.
+  string parent_thread_id = 4 [(spec.assert_max_size) = 128];
+  // successor_thread_id: set on the aged-out entry at revival, so a late reply
+  // to the old id is routed to the new one.
+  string successor_thread_id = 5 [(spec.assert_max_size) = 128];
+  // room_ref is the room the thread lives in (REF_KIND_ROOM), or the pigeon
+  // thread. move_conversation updates it (A6).
+  Ref room_ref = 6;
+  int64 created_ms = 7 [(spec.assert_ge) = 0];
+  // last_used_ms drives age-out.
+  int64 last_used_ms = 8 [(spec.assert_ge) = 0];
+  // use_counter is A29's "last-used counter": turns taken.
+  int64 use_counter = 9 [(spec.assert_ge) = 0];
+  // done_through_seq is the PER-THREAD ack (A29): the highest instance seq in
+  // this thread acked by `done`.
+  int64 done_through_seq = 10 [(spec.assert_ge) = 0];
+  ThreadState state = 11 [(spec.assert_enum_defined) = true];
+  // version: republish-in-place (A4 arbitration).
+  int64 version = 12 [(spec.assert_ge) = 0];
+
+  string namespace = 13 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 14 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 15 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// The runtime's room tools (§2.5). These are the argument and result types
+// only: the tools themselves are injected into every persona service by T1,
+// which does not exist yet, so no rpc is declared here (the same reason
+// PersonaDefinition has no annotation to attach it with).
+
+// PostRoomRequest is post_room's arguments. thread_id empty or the session's
+// own thread = reply in it; any other EXISTING id is refused with a descriptive
+// error (BQ9); a new thread (thread_id empty and room_ref set) gets a
+// runtime-minted id, returned in the result. thread_id, causation_id and
+// hop_count on the posted message are filled by the generated sender (T7).
+message PostRoomRequest {
+  string text = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 16384];
+  string thread_id = 2 [(spec.assert_max_size) = 128];
+  // room_ref only for a new thread.
+  Ref room_ref = 3;
+}
+
+message PostRoomResponse {
+  // thread_id the message was posted in. For a new thread the model must carry
+  // it itself ("functional-tools").
+  string thread_id = 1 [(spec.assert_max_size) = 128];
+  // event_id of the posted scottypersonal.ChatEvent.
+  string event_id = 2 [(spec.assert_max_size) = 600];
+}
+
+// GetRoomDigestRequest is get_room_digest's arguments. PAGE-shaped: the token
+// comes back in the structured result and the model passes it back (§2.6).
+message GetRoomDigestRequest {
+  Ref room_ref = 1;
+  string page_token = 2 [(spec.assert_max_size) = 1024];
+}
+
+// RoomDigestThread is one thread of a room, deterministically derived (BQ11).
+// NEVER a message body: subject is at most the thread's first line.
+message RoomDigestThread {
+  string thread_id = 1 [(spec.assert_max_size) = 128];
+  repeated string participants = 2 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 256];
+  int64 created_ms = 3 [(spec.assert_ge) = 0];
+  int64 last_used_ms = 4 [(spec.assert_ge) = 0];
+  int64 message_count = 5 [(spec.assert_ge) = 0];
+  // open_proposal_ids / open_wait_ids: what is still pending in the thread.
+  repeated string open_proposal_ids = 6 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 128];
+  repeated string open_wait_ids = 7 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 128];
+  // subject is at most 80 characters; the bound is bytes, so 4 per character.
+  string subject = 8 [(spec.assert_max_size) = 320];
+}
+
+message GetRoomDigestResponse {
+  repeated RoomDigestThread threads = 1 [(spec.assert_max_size) = 100];
+  string next_page_token = 2 [(spec.assert_max_size) = 1024];
+}
+
+// ============================================================================
+// 3. Waits (A3)
+// ============================================================================
+
+enum WaitKind {
+  WAIT_KIND_UNSPECIFIED = 0;
+  WAIT_KIND_CREW_COMMAND_REPLY = 1;  // ref = command_id
+  WAIT_KIND_THREAD_REPLY = 2;        // ref = thread_id (a person or a dog)
+  WAIT_KIND_RECORD_CHANGE = 3;       // ref = "<record_type>/<key>"
+  WAIT_KIND_PROPOSAL_DECISION = 4;   // ref = ticket_id
+}
+
+enum WaitState {
+  WAIT_STATE_UNSPECIFIED = 0;
+  WAIT_STATE_OPEN = 1;
+  WAIT_STATE_MATCHED = 2;
+  WAIT_STATE_EXPIRED = 3;
+  WAIT_STATE_CANCELLED = 4;
+}
+
+// Wait is a pending expectation. wait_for writes it and the run EXITS; the
+// matching event (enqueued with wait_id) or the deadline (a Scheduler
+// registration "wait:<wait_id>", EVENT_SOURCE_WAIT_DEADLINE) wakes the dog
+// with `context` attached, and the unused wake-up is cancelled.
+// RETENTION: follows CHAT.
+message Wait {
+  option (spec.record) = {
+    key: "wait_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["beagle", "otto", "tally"]}
+    residency: {idle_seconds: 86400}
+  };
+
+  string wait_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 128];
+  string instance_key = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 512, (spec.query_field) = {op: QUERY_OP_EQ}];
+  // kind must be in the persona's wait_allowlist.
+  WaitKind kind = 3 [(spec.assert_enum_defined) = true];
+  string ref = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 600, (spec.query_field) = {op: QUERY_OP_EQ}];
+  int64 deadline_ms = 5 [(spec.assert_ge) = 0];
+  // context is the dog's own note of why it waits; handed back on wake.
+  string context = 6 [(spec.assert_max_size) = 4000];
+  string thread_id = 7 [(spec.assert_max_size) = 128];
+  string causation_id = 8 [(spec.assert_max_size) = 128];
+  WaitState state = 9 [(spec.assert_enum_defined) = true];
+  int64 version = 10 [(spec.assert_ge) = 0];
+
+  string namespace = 11 [(spec.store_namespace) = true, (spec.assert_max_size) = 256];
+  string spiffe_id = 12 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 13 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// ============================================================================
+// 4. Company structure, grants, budgets (A11, A15, A16, A17, A21; D6)
+// ============================================================================
+
+enum CompanyRole {
+  COMPANY_ROLE_UNSPECIFIED = 0;
+  COMPANY_ROLE_OWNER = 1;
+  COMPANY_ROLE_OFFICE = 2;
+  COMPANY_ROLE_FOREMAN = 3;
+  COMPANY_ROLE_CREW = 4;
+  COMPANY_ROLE_SUB = 5;       // room-only guest (A21)
+  COMPANY_ROLE_CUSTOMER = 6;  // room-only guest (A21); Frank's rooms
+  COMPANY_ROLE_GUEST = 7;     // any other room-only guest (a vendor)
+}
+
+// Right is a deterministic permission the service path checks (A17). Every
+// right is delegable through a Grant (A15); the non-delegable list is empty
+// for now.
+enum Right {
+  RIGHT_UNSPECIFIED = 0;
+  RIGHT_ANSWER = 1;       // may answer a dog on the company's behalf (TA-1: go/no-go)
+  RIGHT_ASSIGN = 2;       // may assign work
+  RIGHT_APPROVE = 3;      // may decide Proposals; also the advice-read entitlement (D13)
+  RIGHT_WRITE_RULES = 4;  // may write judgment CrewRules
+}
+
+message Member {
+  string principal = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 256];
+  CompanyRole role = 2 [(spec.assert_enum_defined) = true];
+  // reports_to orders the org chart; it also sets Scotty budget precedence
+  // among members (A11).
+  string reports_to = 3 [(spec.assert_max_size) = 256];
+  // room_ids: for a guest role, the ONLY rooms they see and may @ a dog in
+  // (A21).
+  repeated string room_ids = 4 [(spec.assert_max_size) = 256, (spec.assert_element_max_size) = 600];
+}
+
+message RoleRights {
+  CompanyRole role = 1 [(spec.assert_enum_defined) = true];
+  repeated Right rights = 2 [(spec.assert_max_size) = 8];
+}
+
+// CompanyStructure — ONE row per tenant (A17), keyed by tenant id. Written
+// only from the web console by the owner role (D6); for the first tenant,
+// seeded once by the import service (Q27). Deterministic rules are structured
+// fields here, checked by the service path, not by a model.
+//
+// NOT HERE, on purpose (Jody, 2026-09-29):
+//   - Quiet hours / holds. Whether a PERSON is interrupted is their own
+//     Scotty's call against their own rules; no company dog decides a hold.
+//     TODO(CP3): A17 listed quiet hours as a company rule; that entry is
+//     superseded by "holds are Scotty's" and no field is declared.
+//   - Language. A per-person user setting, not a company one.
+//   - Birthdays / anniversaries and muting a persona. Scotty rules on the
+//     person's profile, not company features.
+//   - Break-glass. Tenant two.
+//
+// RETENTION: OPERATIONAL.
+message CompanyStructure {
+  option (spec.record) = {
+    key: "tenant_id"
+    owner: "spiffe_id"
+    // TODO(Q27): the producer is the service hosting the console rpc gated on
+    // the owner role, and the one-shot import for the first tenant; neither
+    // exists. scottyagent stands in, as it does in the sketch, until one does.
+    s2s: {auth_services: ["scottyagent"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    // scotty and scottypersonal read display_name: the ship's name in the
+    // pitch and in the web app (GetMyShip).
+    s2s_read: {auth_services: ["beagle", "otto", "tally", "scotty", "scottypersonal"]}
+    residency: {idle_seconds: 604800}
+  };
+
+  string tenant_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 256];
+  repeated Member members = 2 [(spec.assert_max_size) = 512];
+  repeated RoleRights role_rights = 3 [(spec.assert_max_size) = 16];
+
+  // time_zone is IANA; the scheduler and the budget day are tenant-local and
+  // DST-safe (A18).
+  string time_zone = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+
+  // muster_minute: tenant-local minute of the daily muster (Sarge's routine).
+  int32 muster_minute = 5 [(spec.assert_ge) = 0, (spec.assert_le) = 1439];
+  // escalation_chain: roles in order, first to last. The top is who decides
+  // when nobody else will (DQ35); the ack window before the next is tried is
+  // runtime Config (DQ14: 30 min in work hours).
+  repeated CompanyRole escalation_chain = 6 [(spec.assert_max_size) = 8];
+  // offboarding_role handles a member leaving.
+  CompanyRole offboarding_role = 7;
+
+  // 8 dog_budgets: the D18 per-dog budgets, replaced by budget_micro_usd
+  // (pricing addendum 2026-10-10: cost is runs, not dogs).
+  reserved 8;
+  reserved "dog_budgets";
+  // reserve_micro_usd is the tenant's daily priority lane for approvals and
+  // Barry's safety events (A11; D18 default $2).
+  int64 reserve_micro_usd = 9 [(spec.assert_ge) = 0];
+  // all_dogs_room_id is the tenant's all-dogs channel (Q12: CHAT_KIND_CREW).
+  string all_dogs_room_id = 10 [(spec.assert_max_size) = 600];
+  // office_room_id is where unroutable inbound mail lands for a person
+  // (crew-email decision: no match is never a guess).
+  string office_room_id = 11 [(spec.assert_max_size) = 600];
+
+  int64 version = 12 [(spec.assert_ge) = 0];
+  // EQ-queryable so a reader can pin the tenant (scotty, scottypersonal).
+  string namespace = 13 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 14 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // display_name is the company's name as people write it ("SeaBeam"), the
+  // <Company> in "the SS <Company>". The one source for the ship's name: the
+  // Skipper's welcome in the pitch and ScottyPersonal.GetMyShip both read it.
+  string display_name = 15 [(spec.assert_max_size) = 200];
+
+  // budget_micro_usd is the tenant's daily budget for every dog's runs
+  // (crew.MeteringRun), in integer micro-USD; 0 is unset and Scotty's
+  // Config.default_budget_micro_usd applies. Each seat (a member who is not a
+  // room-only guest) has an equal share. Over it, the dog asks the owner on
+  // the record and keeps working; it never stops silently.
+  int64 budget_micro_usd = 16 [(spec.assert_ge) = 0];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 17 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// Grant — a right delegated from one person to another through the
+// delegator's Scotty (A15): time-boxed, in force automatically inside its
+// window, revocable, and dead the moment the delegator no longer holds the
+// right. Checked by the service path wherever the right is checked. Written
+// only on the delegator's explicit instruction (DQ28).
+// RETENTION: OPERATIONAL.
+message Grant {
+  option (spec.record) = {
+    key: "grant_id"
+    owner: "spiffe_id"
+    // Scotty writes it, under the delegator's delegated token (A22).
+    s2s: {auth_services: ["scottyagent"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["beagle", "otto", "tally"]}
+    residency: {idle_seconds: 604800}
+  };
+
+  string grant_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 128];
+  string delegator = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 256];
+  string delegate = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 256, (spec.query_field) = {op: QUERY_OP_EQ}];
+  Right right = 4 [(spec.assert_enum_defined) = true];
+  // scope narrows the grant (e.g. one job); empty = wherever the delegator
+  // holds the right.
+  repeated Ref scope = 5 [(spec.assert_max_size) = 16];
+  int64 from_ms = 6 [(spec.assert_ge) = 0];
+  int64 until_ms = 7 [(spec.assert_ge) = 1];
+  // revoked_at_ms: 0 = not revoked.
+  int64 revoked_at_ms = 8 [(spec.assert_ge) = 0];
+
+  string namespace = 9 [(spec.store_namespace) = true, (spec.assert_max_size) = 256];
+  string spiffe_id = 10 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 11 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// Kennel — whether one company dog is loose or kenneled in one tenant
+// (P-2026-10-09-2; skipper-and-admiral-2026-10-11; design record
+// decisions/crew-product-pitch-2026-10-09.md §7.3, where it was drafted as
+// DogLeash). One row per dog per tenant, so letting one dog loose never
+// rewrites another's row. Absence is the dog's starting state: Barry starts
+// loose, every other dog starts kenneled. The Skipper came with the ship and
+// Scotty is the coach, not crew: neither has a row, and the writer refuses one.
+// A kenneled dog keeps its records; let loose again, it resumes. Written only
+// as the effect of an approved let-loose or kennel (the thumb); a tenant
+// setting the dog reads, not topology.
+// TODO(next slice): scotty's thumb-gated let-loose/kennel action publishes it;
+// until then nothing writes a row and every tenant is in its starting state.
+// RETENTION: OPERATIONAL.
+message Kennel {
+  option (spec.record) = {
+    key: "kennel_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+    residency: {idle_seconds: 604800}
+  };
+
+  // kennel_id is "<namespace>/<dog>", dog lower-case ("sarge").
+  string kennel_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 330];
+  // dog is the persona name as people say it ("Sarge").
+  string dog = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // loose: true = let loose, false = in the kennel.
+  bool loose = 3;
+  // changed_by is the person whose thumb approved the change, by name, on the
+  // record.
+  string changed_by = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 1024];
+  // ticket_id is the approved Proposal (scotty.Ticket).
+  string ticket_id = 5 [(spec.assert_max_size) = 128];
+  int64 changed_at_ms = 6 [(spec.assert_ge) = 0];
+
+  string namespace = 7 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 8 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 9 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// ============================================================================
+// Workspaces (projects/workspaces.md; design record
+// decisions/workspaces-mvp-2026-10-11.md)
+// ============================================================================
+//
+// A workspace is a room with a thing in the middle: people and dogs, the
+// conversation, and an artifact that lives in the customer's Google Docs or
+// Microsoft 365, plus the reasoning behind it. Six records, all tenant-owned,
+// all here beside Kennel because dogs own and read them as well as people.
+// For MVP scotty is the only writer; each dog joins auth_services in the change
+// that declares its service. scotty reads all but WorkspaceTransfer back for
+// the customer web app's ListWorkspaces and GetWorkspace.
+// RETENTION: WORKSPACE (as long as the workspace; a new class, design record
+// §1). Talk in the workspace's room is CHAT; only a promoted WorkspaceNote
+// survives with the workspace.
+
+enum PrincipalKind {
+  PRINCIPAL_KIND_UNSPECIFIED = 0;
+  PRINCIPAL_KIND_PERSON = 1;
+  PRINCIPAL_KIND_DOG = 2;
+}
+
+// Principal is a person or a dog: who owns, belongs to, or acted on a
+// workspace.
+message Principal {
+  PrincipalKind kind = 1 [(spec.assert_enum_defined) = true];
+  // name is the person's principal for PERSON, the persona name as people say
+  // it ("Reveille") for DOG.
+  string name = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 1024];
+  // display_name is a PERSON's name, filled in by Scotty's workspace reads
+  // from the tenant's Humans (identity_links). Never stored: empty on a row,
+  // for a dog, and when no single Human links the principal.
+  string display_name = 3 [(spec.assert_max_size) = 200];
+}
+
+// Workspace — one per workspace. owner is the current owner, a person or a
+// company dog; each move is a WorkspaceTransfer.
+message Workspace {
+  option (spec.record) = {
+    key: "workspace_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+  };
+
+  // workspace_id is "<namespace>/ws-<32 hex>".
+  string workspace_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 300];
+  string title = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 256];
+  Principal owner = 3 [(spec.assert_required) = true];
+  // opened_by is who opened it, person or dog.
+  Principal opened_by = 4 [(spec.assert_required) = true];
+  // origin_room and origin_thread_id are the conversation it came from.
+  Ref origin_room = 5;
+  string origin_thread_id = 6 [(spec.assert_max_size) = 64];
+  int64 opened_at_ms = 7 [(spec.assert_ge) = 0];
+
+  string namespace = 8 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 9 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 10 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// WorkspaceMember — one per member per workspace.
+message WorkspaceMember {
+  option (spec.record) = {
+    key: "member_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+  };
+
+  // member_id is "<workspace_id>/<person|dog>/<name>".
+  string member_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 1400];
+  string workspace_id = 2 [
+    (spec.assert_required) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 300
+  ];
+  Principal member = 3 [(spec.assert_required) = true];
+  // added_by is who added them, on the record.
+  Principal added_by = 4 [(spec.assert_required) = true];
+  int64 added_at_ms = 5 [(spec.assert_ge) = 0];
+
+  string namespace = 6 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 7 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 8 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+enum ArtifactProvider {
+  ARTIFACT_PROVIDER_UNSPECIFIED = 0;
+  ARTIFACT_PROVIDER_GOOGLE_DOCS = 1;
+  ARTIFACT_PROVIDER_MICROSOFT_365 = 2;
+}
+
+// WorkspaceArtifact — a link to the thing being made, where the customer
+// already keeps documents. A link only: the content stays with the provider.
+message WorkspaceArtifact {
+  option (spec.record) = {
+    key: "artifact_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+  };
+
+  // artifact_id is "<workspace_id>/a-<32 hex>".
+  string artifact_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 340];
+  string workspace_id = 2 [
+    (spec.assert_required) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 300
+  ];
+  // provider is read from url's host, never taken from the caller.
+  ArtifactProvider provider = 3 [(spec.assert_enum_defined) = true];
+  string url = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 2048];
+  Principal linked_by = 5 [(spec.assert_required) = true];
+  int64 linked_at_ms = 6 [(spec.assert_ge) = 0];
+
+  string namespace = 7 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 8 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 9 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// WorkspaceArtifactVersion — a version of the artifact that mattered, as an
+// event: the provider's revision id and why. Never the content.
+message WorkspaceArtifactVersion {
+  option (spec.record) = {
+    key: "version_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+  };
+
+  // version_id is "<artifact_id>/<revision>".
+  string version_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 600];
+  string artifact_id = 2 [
+    (spec.assert_required) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 340
+  ];
+  string workspace_id = 3 [
+    (spec.assert_required) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 300
+  ];
+  // revision is the provider's own revision id.
+  string revision = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 256];
+  // why is the reasoning: why this version mattered.
+  string why = 5 [(spec.assert_required) = true, (spec.assert_max_size) = 4000];
+  Principal reported_by = 6 [(spec.assert_required) = true];
+  int64 reported_at_ms = 7 [(spec.assert_ge) = 0];
+
+  string namespace = 8 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 9 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 10 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// WorkspaceNote — a message promoted into the workspace's metadata ("that was
+// a decision"; "keep that"). It survives the room's ninety-day purge with the
+// workspace.
+message WorkspaceNote {
+  option (spec.record) = {
+    key: "note_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+  };
+
+  // note_id is "<workspace_id>/n-<32 hex>".
+  string note_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 340];
+  string workspace_id = 2 [
+    (spec.assert_required) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 300
+  ];
+  // text is the promoted message's words, kept past the purge.
+  string text = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 16384];
+  // source_event_id is the room message it was promoted from.
+  string source_event_id = 4 [(spec.assert_max_size) = 512];
+  Principal promoted_by = 5 [(spec.assert_required) = true];
+  int64 promoted_at_ms = 6 [(spec.assert_ge) = 0];
+
+  string namespace = 7 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 8 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 9 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// DogPosition is one dog's say in a transfer's deliberation ("that's not
+// really mine, wouldn't Reveille be better?").
+message DogPosition {
+  // dog is the persona name, a company dog.
+  string dog = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string words = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 4000];
+}
+
+// WorkspaceTransfer — one ownership move, append-only. Written only with the
+// dogs' deliberation on it and a named person's thumb.
+message WorkspaceTransfer {
+  option (spec.record) = {
+    key: "transfer_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+  };
+
+  // transfer_id is "<workspace_id>/t-<32 hex>".
+  string transfer_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 340];
+  string workspace_id = 2 [
+    (spec.assert_required) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 300
+  ];
+  Principal from = 3 [(spec.assert_required) = true];
+  Principal to = 4 [(spec.assert_required) = true];
+  // deliberation is the dogs' say on who should hold it, in order.
+  repeated DogPosition deliberation = 5 [(spec.assert_min_size) = 1, (spec.assert_max_size) = 16];
+  // thumb_by is the person whose thumb approved the move, by name.
+  string thumb_by = 6 [(spec.assert_required) = true, (spec.assert_max_size) = 1024];
+  int64 transferred_at_ms = 7 [(spec.assert_ge) = 0];
+
+  string namespace = 8 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 9 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 10 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// ============================================================================
+// 5. Observability: ToolCallOutcome (A26) and Report (A27)
+// ============================================================================
+
+enum ToolOutcomeClass {
+  TOOL_OUTCOME_CLASS_UNSPECIFIED = 0;
+  TOOL_OUTCOME_CLASS_OK = 1;
+  TOOL_OUTCOME_CLASS_PARSE = 2;            // arguments did not parse (A25)
+  TOOL_OUTCOME_CLASS_VALIDATION = 3;       // parsed, failed validation (A25)
+  TOOL_OUTCOME_CLASS_REFUSED = 4;          // authorization / manifest / device gate
+  TOOL_OUTCOME_CLASS_UNKNOWN_OUTCOME = 5;  // external effect, ack lost (A1)
+}
+
+// ToolCallOutcome — one per tool call, written by the runtime (A26). It
+// carries no arguments and no text, only classes and ids, so it can never hold
+// a person<->Scotty conversation (never logged, Jody 2026-09-29). Weekly
+// rollup per dog x tool x class; a recurring failure becomes an eval case.
+// RETENTION: LOG (2 years).
+message ToolCallOutcome {
+  option (spec.record) = {
+    key: "outcome_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    mutability: MUTABILITY_APPEND_ONLY
+    residency: {idle_seconds: 86400}
+  };
+
+  string outcome_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 600];
+  string dog = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 64, (spec.query_field) = {op: QUERY_OP_EQ}];
+  // persona_version is PersonaDefinition.version_hash at the time.
+  string persona_version = 3 [(spec.assert_max_size) = 64];
+  string model = 4 [(spec.assert_max_size) = 128];
+  string tool = 5 [(spec.assert_max_size) = 256, (spec.query_field) = {op: QUERY_OP_EQ}];
+  ToolOutcomeClass outcome = 6 [(spec.assert_enum_defined) = true];
+  // error_path is the JSON path tacplus reports for a parse/validation error
+  // (ask T8).
+  string error_path = 7 [(spec.assert_max_size) = 1000];
+  string run_id = 8 [(spec.assert_max_size) = 128];
+  int64 at_ms = 9 [(spec.query_field) = {op: QUERY_OP_RANGE}];
+
+  string namespace = 10 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 11 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 12 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// LogbookEntry — the company logbook line (contract §6; design §6): one per
+// mutating tool call, written by the runtime, never by the model. It carries
+// ids and a one-line summary, never message text, so a person<->Scotty
+// conversation never lands here (Jody, 2026-09-29).
+// TODO(design §6): PersonalLogbookEntry (Scotty's private copy, P8/S3) and
+// Reveille's actor-stripped projection (A19) are not declared yet.
+// RETENTION: LOG (2 years).
+message LogbookEntry {
+  option (spec.record) = {
+    // "<instance_key>/<event_seq>/<tool>/<id of what the act produced>".
+    key: "entry_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty", "beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    mutability: MUTABILITY_APPEND_ONLY
+    residency: {idle_seconds: 86400}
+  };
+
+  string entry_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 1200];
+  string instance_key = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 512, (spec.query_field) = {op: QUERY_OP_EQ}];
+  // dog is the persona name that acted.
+  string dog = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // persona_version is PersonaDefinition.version_hash at the time.
+  string persona_version = 4 [(spec.assert_max_size) = 64];
+  string tool = 5 [(spec.assert_required) = true, (spec.assert_max_size) = 256];
+  // thread_id the act was taken in (A29).
+  string thread_id = 6 [(spec.assert_max_size) = 128];
+  // event_seq is the instance seq of the event the act answered.
+  int64 event_seq = 7 [(spec.assert_ge) = 0];
+  // referenced: the room, record or event the act touched or answered.
+  repeated Ref referenced = 8 [(spec.assert_max_size) = 16];
+  // summary is one line, written by the runtime from ids, never from text.
+  string summary = 9 [(spec.assert_max_size) = 500];
+  int64 at_ms = 10 [(spec.assert_ge) = 0, (spec.query_field) = {op: QUERY_OP_RANGE}];
+
+  string namespace = 11 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 12 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 13 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+// MeteringRun — one model run, one session turn, as llmproxy charged it
+// (pricing addendum 2026-10-10: cost is runs, not dogs). Written by the
+// runtime from the turn's llmproxy Usage, never by a person or a model. Read
+// per tenant and per seat, by trigger, against the tenant's budget
+// (CompanyStructure.budget_micro_usd) by Scotty's GetMetering.
+// Cache rate is cache_read_input_tokens / (input_tokens + cache_read_input_tokens).
+// RETENTION: OPERATIONAL.
+message MeteringRun {
+  option (spec.record) = {
+    // "<instance_key>/<turn_id>".
+    key: "run_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["scotty"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["scotty"]}
+    mutability: MUTABILITY_APPEND_ONLY
+    residency: {idle_seconds: 86400}
+  };
+
+  string run_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 700];
+  // dog is the persona name that ran.
+  string dog = 2 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  // seat is the person whose event started the run (CrewEvent.actor).
+  string seat = 3 [(spec.assert_max_size) = 256];
+  // trigger is what started the run (CrewEvent.source).
+  EventSource trigger = 4 [(spec.assert_enum_defined) = true];
+  BudgetBucket bucket = 5 [(spec.assert_enum_defined) = true];
+  // model_alias is the tier the run used.
+  string model_alias = 6 [(spec.assert_max_size) = 64];
+  int64 input_tokens = 7 [(spec.assert_ge) = 0];
+  int64 output_tokens = 8 [(spec.assert_ge) = 0];
+  int64 cache_read_input_tokens = 9 [(spec.assert_ge) = 0];
+  int64 cost_micro_usd = 10 [(spec.assert_ge) = 0];
+  // budget_exhausted: llmproxy stopped the turn at its own ceiling.
+  bool budget_exhausted = 11;
+  int64 at_ms = 12 [(spec.assert_ge) = 0, (spec.query_field) = {op: QUERY_OP_RANGE}];
+
+  string namespace = 13 [
+    (spec.store_namespace) = true,
+    (spec.query_field) = {op: QUERY_OP_EQ},
+    (spec.assert_max_size) = 256
+  ];
+  string spiffe_id = 14 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 15 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
+
+enum ReportClass {
+  REPORT_CLASS_UNSPECIFIED = 0;
+  REPORT_CLASS_CANNOT_DO = 1;
+  REPORT_CLASS_CONTRADICTION_IN_ORDERS = 2;
+  REPORT_CLASS_SUSPECTED_INJECTION = 3;
+  REPORT_CLASS_REPEATED_FAILURE = 4;
+  REPORT_CLASS_BUDGET = 5;
+  REPORT_CLASS_NEEDS_A_PERSON = 6;
+}
+
+// Report — the dogs' formal, auditable channel to SeaBeam, and the ONLY one
+// (A27). Lands on the company record; SeaBeam answers on the same record.
+// TODO(Q23): SeaBeam reads a stripped projection with no message text through
+// one fleet-level ops service; neither the projection nor that service exists.
+// TODO(DQ31): a report from a personal (Scotty) run lands in the person's
+// private record instead; that private type is not declared here.
+// RETENTION: LOG (2 years).
+message Report {
+  option (spec.record) = {
+    key: "report_id"
+    owner: "spiffe_id"
+    s2s: {auth_services: ["beagle", "otto", "tally"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    residency: {idle_seconds: 604800}
+  };
+
+  string report_id = 1 [(spec.assert_required) = true, (spec.assert_min_size) = 1, (spec.assert_max_size) = 128];
+  ReportClass report_class = 2 [(spec.assert_enum_defined) = true];
+  string dog = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 64];
+  string run_id = 4 [(spec.assert_max_size) = 128];
+  repeated string tool_outcome_ids = 5 [(spec.assert_max_size) = 32, (spec.assert_element_max_size) = 600];
+  // words is the dog's own account.
+  string words = 6 [(spec.assert_max_size) = 4000];
+  // answer is SeaBeam's reply, written back on the same record.
+  string answer = 7 [(spec.assert_max_size) = 4000];
+  int64 filed_at_ms = 8 [(spec.assert_ge) = 0];
+  int64 version = 9 [(spec.assert_ge) = 0];
+
+  string namespace = 10 [(spec.store_namespace) = true, (spec.assert_max_size) = 256];
+  string spiffe_id = 11 [(spec.identity_spiffe_subject) = true, (spec.assert_max_size) = 1024];
+
+  // store_epoch_ms is the row's LAST-WRITE clock, stamped by the generated
+  // subscription dispatch, so it is never producer-supplied.
+  int64 store_epoch_ms = 12 [
+    (spec.store_epoch) = true,
+    (spec.query_field) = {op: QUERY_OP_RANGE}
+  ];
+}
