@@ -16,10 +16,13 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use std::collections::HashMap;
+
 use llmproxy_model::types::services::llmproxy::llmproxy::{
     content_block::Block, generate_completion_response::Result as GenResult, ContentBlock,
     GenerateCompletionRequest, GenerateCompletionResponse, Message as ProtoMessage, ModelAlias,
-    Role as ProtoRole, ToolSpec as ProtoToolSpec, ToolUse as ProtoToolUse, Usage as ProtoUsage,
+    ModelRoute, Role as ProtoRole, ToolSpec as ProtoToolSpec, ToolUse as ProtoToolUse,
+    Usage as ProtoUsage,
 };
 
 use crate::federation::Federation;
@@ -27,33 +30,44 @@ use crate::federation::Federation;
 pub const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-/// model_alias -> real Anthropic model id. A plain match today; grows into a
-/// config-driven table (and eventually a local-model route) without callers
-/// ever changing what they ask for — see llmproxy.proto's GenerateCompletionRequest
-/// comment on model_alias.
-fn resolve_model_alias(alias: &str) -> Result<&'static str, AnthropicError> {
-    match alias {
-        "claude-sonnet" => Ok("claude-sonnet-4-5"),
-        other => Err(AnthropicError::UnknownModelAlias(other.to_string())),
-    }
+/// The alias table: `Config.models`, keyed by alias. The provider model and
+/// its price come from config, so a model changes with a config push, never a
+/// rebuild (this replaces the code table and LP4(b)'s in-code pricing).
+#[derive(Clone, Default)]
+pub struct ModelTable {
+    routes: HashMap<String, ModelRoute>,
 }
 
-/// Micro-USD per input and per output token for a resolved model id (crew
-/// runtime §10 budgets are money; LP4(b): pricing stays in code next to the
-/// alias table, no Config field).
-fn price_micro_usd_per_token(model: &str) -> (i64, i64) {
-    match model {
-        // $3 / MTok in, $15 / MTok out.
-        "claude-sonnet-4-5" => (3, 15),
-        other => unreachable!("no price for {other}: every resolve_model_alias result has one"),
+impl ModelTable {
+    pub fn new(routes: &[ModelRoute]) -> Self {
+        Self {
+            routes: routes
+                .iter()
+                .map(|r| (r.alias.clone(), r.clone()))
+                .collect(),
+        }
     }
-}
 
-pub fn known_model_aliases() -> Vec<ModelAlias> {
-    vec![ModelAlias {
-        name: "claude-sonnet".to_string(),
-        ..Default::default()
-    }]
+    /// The route for an alias, or UnknownModelAlias — the gate every call
+    /// passes first.
+    pub fn resolve(&self, alias: &str) -> Result<&ModelRoute, AnthropicError> {
+        self.routes
+            .get(alias)
+            .ok_or_else(|| AnthropicError::UnknownModelAlias(alias.to_string()))
+    }
+
+    /// The aliases served, for ListModels, in a stable order.
+    pub fn aliases(&self) -> Vec<ModelAlias> {
+        let mut names: Vec<&String> = self.routes.keys().collect();
+        names.sort();
+        names
+            .into_iter()
+            .map(|name| ModelAlias {
+                name: name.clone(),
+                ..Default::default()
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,7 +120,10 @@ struct WireToolSpec {
 pub enum AnthropicError {
     UnknownModelAlias(String),
     Request(reqwest::Error),
-    Api { status: u16, body: String },
+    Api {
+        status: u16,
+        body: String,
+    },
     UnexpectedResponseShape(String),
     /// No provider credential could be obtained (D22 federation: the cached
     /// token is expired and the exchange is failing).
@@ -232,13 +249,19 @@ pub struct AnthropicClient {
     http: reqwest::Client,
     credential: Credential,
     base_url: String,
+    models: ModelTable,
 }
 
 impl AnthropicClient {
-    pub fn new(credential: Credential, base_url: Option<String>) -> Self {
+    pub fn models(&self) -> &ModelTable {
+        &self.models
+    }
+
+    pub fn new(credential: Credential, base_url: Option<String>, models: ModelTable) -> Self {
         Self {
             http: reqwest::Client::new(),
             credential,
+            models,
             base_url: base_url
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| ANTHROPIC_API_BASE.to_string()),
@@ -306,7 +329,8 @@ impl AnthropicClient {
             metadata: Metadata<'a>,
         }
 
-        let model = resolve_model_alias(model_alias)?;
+        let route = self.models.resolve(model_alias)?;
+        let model = route.provider_model.as_str();
         let body = serde_json::to_value(Request {
             model,
             max_tokens,
@@ -318,7 +342,10 @@ impl AnthropicClient {
         .expect("Request serializes: every field type has a Serialize impl");
 
         let reply = parse_turn_reply(&self.post_messages(&body).await?)?;
-        let (per_in, per_out) = price_micro_usd_per_token(model);
+        let (per_in, per_out) = (
+            route.input_micro_usd_per_token,
+            route.output_micro_usd_per_token,
+        );
         Ok(TurnReply {
             cost_micro_usd: reply.input_tokens * per_in + reply.output_tokens * per_out,
             ..reply
@@ -331,7 +358,11 @@ impl AnthropicClient {
         &self,
         req: &GenerateCompletionRequest,
     ) -> Result<GenerateCompletionResponse, AnthropicError> {
-        let model = resolve_model_alias(&req.model_alias)?;
+        let model = self
+            .models
+            .resolve(&req.model_alias)?
+            .provider_model
+            .as_str();
         let body = build_request_body(model, req)?;
         parse_response(&self.post_messages(&body).await?)
     }
@@ -573,11 +604,27 @@ mod tests {
     #[test]
     fn unknown_model_alias_is_rejected() {
         // build_request_body takes an ALREADY-RESOLVED provider model string
-        // (see generate_completion: resolve_model_alias runs first), so it has
-        // no opinion on model_alias itself — what's under test is that
-        // resolve_model_alias, the actual gate, refuses an unknown alias.
-        let err = resolve_model_alias("gpt-5").unwrap_err();
+        // (see generate_completion: ModelTable::resolve runs first), so it has
+        // no opinion on model_alias itself — what's under test is that the
+        // table, the actual gate, refuses an alias config did not declare,
+        // and that an empty table refuses everything.
+        let table = ModelTable::new(&[ModelRoute {
+            alias: "claude-sonnet".to_string(),
+            provider_model: "claude-sonnet-4-5".to_string(),
+            input_micro_usd_per_token: 3,
+            output_micro_usd_per_token: 15,
+            ..Default::default()
+        }]);
+        let err = table.resolve("gpt-5").unwrap_err();
         assert!(matches!(err, AnthropicError::UnknownModelAlias(a) if a == "gpt-5"));
+        assert_eq!(
+            table.resolve("claude-sonnet").unwrap().provider_model,
+            "claude-sonnet-4-5"
+        );
+        assert!(matches!(
+            ModelTable::default().resolve("claude-sonnet"),
+            Err(AnthropicError::UnknownModelAlias(_))
+        ));
     }
 
     #[test]
@@ -641,11 +688,13 @@ mod tests {
                 ProtoMessage {
                     role: ProtoRole::User as i32,
                     content: vec![ContentBlock {
-                        block: Some(Block::ToolResult(llmproxy_model::types::services::llmproxy::llmproxy::ToolResult {
-                            tool_use_id: "toolu_1".to_string(),
-                            content: "{}".to_string(),
-                            ..Default::default()
-                        })),
+                        block: Some(Block::ToolResult(
+                            llmproxy_model::types::services::llmproxy::llmproxy::ToolResult {
+                                tool_use_id: "toolu_1".to_string(),
+                                content: "{}".to_string(),
+                                ..Default::default()
+                            },
+                        )),
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -675,7 +724,10 @@ mod tests {
         });
 
         let parsed = parse_response(&body).expect("parses");
-        assert_eq!(parsed.result, Some(GenResult::Text("the answer is 4".to_string())));
+        assert_eq!(
+            parsed.result,
+            Some(GenResult::Text("the answer is 4".to_string()))
+        );
         assert_eq!(parsed.usage.unwrap().input_tokens, 10);
     }
 
@@ -686,10 +738,22 @@ mod tests {
             "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 90},
         });
         let reply = parse_turn_reply(&body).expect("parses");
-        assert_eq!((reply.input_tokens, reply.output_tokens, reply.cache_read_input_tokens), (10, 5, 90));
+        assert_eq!(
+            (
+                reply.input_tokens,
+                reply.output_tokens,
+                reply.cache_read_input_tokens
+            ),
+            (10, 5, 90)
+        );
 
         let body = json!({"content": [], "usage": {"input_tokens": 10, "output_tokens": 5}});
-        assert_eq!(parse_turn_reply(&body).expect("parses").cache_read_input_tokens, 0);
+        assert_eq!(
+            parse_turn_reply(&body)
+                .expect("parses")
+                .cache_read_input_tokens,
+            0
+        );
     }
 
     #[test]
@@ -725,7 +789,21 @@ mod tests {
     }
 
     #[test]
-    fn known_model_aliases_is_non_empty() {
-        assert!(!known_model_aliases().is_empty());
+    fn list_models_is_the_configured_aliases_in_order() {
+        let table = ModelTable::new(&[
+            ModelRoute {
+                alias: "b".to_string(),
+                provider_model: "m2".to_string(),
+                ..Default::default()
+            },
+            ModelRoute {
+                alias: "a".to_string(),
+                provider_model: "m1".to_string(),
+                ..Default::default()
+            },
+        ]);
+        let names: Vec<String> = table.aliases().into_iter().map(|m| m.name).collect();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+        assert!(ModelTable::default().aliases().is_empty());
     }
 }

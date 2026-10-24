@@ -44,7 +44,10 @@ impl CallbackStream {
         payload: String,
     ) -> Result<oneshot::Receiver<String>, CallbackLost> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(frame_id.to_string(), tx);
+        self.pending
+            .lock()
+            .unwrap()
+            .insert(frame_id.to_string(), tx);
         let out = self.out.lock().unwrap().clone();
         let sent = match out {
             Some(out) => out.send(Ok(McpRequest { payload })).await.is_ok(),
@@ -67,12 +70,16 @@ impl CallbackStream {
         let id = serde_json::from_str::<serde_json::Value>(&payload)
             .ok()
             .and_then(|v| v.get("id").and_then(|id| id.as_str().map(str::to_string)));
-        let waiter = id.as_ref().and_then(|id| self.pending.lock().unwrap().remove(id));
+        let waiter = id
+            .as_ref()
+            .and_then(|id| self.pending.lock().unwrap().remove(id));
         match waiter {
             Some(waiter) => {
                 let _ = waiter.send(payload);
             }
-            None => tracing::warn!(caller, frame_id = ?id, "dropped a callback answer with no waiting frame (late or unknown)"),
+            None => {
+                tracing::warn!(caller, frame_id = ?id, "dropped a callback answer with no waiting frame (late or unknown)")
+            }
         }
     }
 
@@ -100,7 +107,12 @@ impl CallbackRegistry {
             out: Mutex::new(Some(tx)),
             pending: Mutex::new(HashMap::new()),
         });
-        if let Some(old) = self.streams.lock().unwrap().insert(caller.clone(), stream.clone()) {
+        if let Some(old) = self
+            .streams
+            .lock()
+            .unwrap()
+            .insert(caller.clone(), stream.clone())
+        {
             tracing::info!(caller = %caller, "callback stream re-opened; closing the previous one");
             old.close();
         }
@@ -160,7 +172,10 @@ impl CallbackRegistry {
 
     fn remove_if_current(&self, caller: &str, generation: u64) {
         let mut streams = self.streams.lock().unwrap();
-        if streams.get(caller).is_some_and(|s| s.generation == generation) {
+        if streams
+            .get(caller)
+            .is_some_and(|s| s.generation == generation)
+        {
             streams.remove(caller);
         }
     }

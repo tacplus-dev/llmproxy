@@ -22,7 +22,10 @@ pub async fn serve(router: Router) -> String {
 }
 
 pub fn now_secs() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 /// Mints kernel-shaped JWTs with `aud = ASSERTION_AUDIENCE` and a fresh jti
@@ -39,7 +42,8 @@ impl AssertionSource for MockAssertions {
         let key = key::keys::generate_ed25519_key().unwrap();
         let mut t = token::token::Token::new();
         t.set_issuer("https://fleet.test").unwrap();
-        t.set_subject("spiffe://td.test/system/services/llmproxy").unwrap();
+        t.set_subject("spiffe://td.test/system/services/llmproxy")
+            .unwrap();
         t.set_namespace("/system").unwrap();
         t.set_audience(ASSERTION_AUDIENCE).unwrap();
         t.set_jti(format!("jti-{n}")).unwrap();
@@ -81,11 +85,17 @@ impl MockTokenEndpoint {
         self.bodies.lock().unwrap().len()
     }
 
-    async fn exchange(State(mock): State<Arc<Self>>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
+    async fn exchange(
+        State(mock): State<Arc<Self>>,
+        Json(body): Json<Value>,
+    ) -> (StatusCode, Json<Value>) {
         // Long enough that concurrent callers overlap the one exchange.
         tokio::time::sleep(Duration::from_millis(50)).await;
         if mock.fail.load(Ordering::SeqCst) {
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "unavailable"})));
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "unavailable"})),
+            );
         }
         let n = {
             let mut bodies = mock.bodies.lock().unwrap();
@@ -119,7 +129,12 @@ impl MockAnthropic {
     }
 
     pub fn bodies(&self) -> Vec<Value> {
-        self.requests.lock().unwrap().iter().map(|(_, b)| b.clone()).collect()
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, b)| b.clone())
+            .collect()
     }
 
     async fn messages(

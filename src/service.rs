@@ -15,16 +15,16 @@ use tonic::Status;
 
 use llmproxy_model::s2sm::handler::Handler;
 use llmproxy_model::s2sm::internal::grpc::servers::services::llmproxy::llm_proxy::LlmProxyHandler;
-use llmproxy_model::types::services::llmproxy::llmproxy::{
-    BucketBalance, Config as LlmProxyConfig, GenerateCompletionRequest,
-    GenerateCompletionResponse, GetBudgetRequest, GetBudgetResponse, ListModelsRequest,
-    ListModelsResponse, Message as ProtoMessage, SessionTurnRequest, SessionTurnResponse,
-};
 use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::{
+    BucketBalance, Config as LlmProxyConfig, GenerateCompletionRequest, GenerateCompletionResponse,
+    GetBudgetRequest, GetBudgetResponse, ListModelsRequest, ListModelsResponse,
+    Message as ProtoMessage, SessionTurnRequest, SessionTurnResponse,
+};
 use llmproxy_model::types::sys::healthreport::healthreport::InstanceStatus;
 
 use crate::anthropic::{
-    known_model_aliases, AnthropicClient, AnthropicError, Credential, ANTHROPIC_API_BASE,
+    AnthropicClient, AnthropicError, Credential, ModelTable, ANTHROPIC_API_BASE,
 };
 use crate::budget::Ledger;
 use crate::callbacks::{CallbackRegistry, InboundStream, OutboundStream};
@@ -93,6 +93,7 @@ impl LlmProxyService {
             anthropic: RwLock::new(Arc::new(AnthropicClient::new(
                 Credential::ApiKey(String::new()),
                 None,
+                ModelTable::default(),
             ))),
             config: RwLock::new(Arc::new(LlmProxyConfig::default())),
             trust_domain,
@@ -129,7 +130,11 @@ impl LlmProxyService {
             }
             None => Credential::ApiKey(cfg.llm_credential.clone()),
         };
-        *self.anthropic.write().unwrap() = Arc::new(AnthropicClient::new(credential, base_url));
+        *self.anthropic.write().unwrap() = Arc::new(AnthropicClient::new(
+            credential,
+            base_url,
+            ModelTable::new(&cfg.models),
+        ));
         *self.config.write().unwrap() = Arc::new(cfg.clone());
         self.callbacks.close_matching(&cfg.blocked_callers);
         Ok(())
@@ -162,7 +167,12 @@ impl LlmProxyService {
             .service_path()
             .map_err(|e| Status::permission_denied(format!("caller is not a service: {e}")))?;
         let id = format!("{scope}/services/{service}");
-        if self.config().blocked_callers.iter().any(|p| id.starts_with(p.as_str())) {
+        if self
+            .config()
+            .blocked_callers
+            .iter()
+            .any(|p| id.starts_with(p.as_str()))
+        {
             return Err(Status::permission_denied(format!("caller {id} is blocked")));
         }
         Ok(id)
@@ -232,7 +242,9 @@ impl LlmProxyHandler for LlmProxyService {
         req: tonic::Request<InboundStream>,
     ) -> Result<tonic::Response<OutboundStream>, Status> {
         let caller = self.caller_id(caller)?;
-        Ok(tonic::Response::new(self.callbacks.open(caller, req.into_inner())))
+        Ok(tonic::Response::new(
+            self.callbacks.open(caller, req.into_inner()),
+        ))
     }
 
     async fn get_budget(
@@ -271,7 +283,7 @@ impl LlmProxyHandler for LlmProxyService {
     ) -> Result<ListModelsResponse, Status> {
         self.caller_id(caller)?;
         Ok(ListModelsResponse {
-            model_aliases: known_model_aliases(),
+            model_aliases: self.anthropic().models().aliases(),
             ..Default::default()
         })
     }

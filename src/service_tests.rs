@@ -23,6 +23,7 @@ use tokio_stream::StreamExt;
 use llmproxy_model::s2sm::internal::grpc::servers::services::llmproxy::llm_proxy::{
     Authorizer, ValidationWrapper,
 };
+use llmproxy_model::types::services::llmproxy::helpers::config_defaults;
 use llmproxy_model::types::services::llmproxy::llmproxy::llm_proxy_client::LlmProxyClient;
 use llmproxy_model::types::services::llmproxy::llmproxy::llm_proxy_server::LlmProxy;
 use llmproxy_model::types::services::llmproxy::llmproxy::{
@@ -30,8 +31,7 @@ use llmproxy_model::types::services::llmproxy::llmproxy::{
     GetBudgetRequest, ListModelsRequest, Message, ModelAlias, Role, SessionTurnRequest,
     SessionTurnResponse, StopReason, ToolSpec,
 };
-use llmproxy_model::types::services::llmproxy::helpers::config_defaults;
-use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::{BudgetBucket, ModelRoute};
 use llmproxy_model::types::sys::accounting::accounting::Event;
 use llmproxy_model::types::sys::mcp::McpResponse;
 
@@ -174,6 +174,15 @@ impl Harness {
         let mut cfg = LlmProxyConfig {
             llm_credential: "sk-ant-static-test".to_string(),
             default_provider_base_url: provider_url,
+            // The one alias the tests ask for, priced $3 / $15 per MTok as the
+            // budget assertions expect.
+            models: vec![ModelRoute {
+                alias: "claude-sonnet".to_string(),
+                provider_model: "claude-sonnet-4-5".to_string(),
+                input_micro_usd_per_token: 3,
+                output_micro_usd_per_token: 15,
+                ..Default::default()
+            }],
             ..Default::default()
         };
         configure(&mut cfg);
@@ -210,7 +219,14 @@ impl Harness {
                 .unwrap()
         });
 
-        Harness { svc, wrapper, anthropic, tokens, cfg, grpc_url }
+        Harness {
+            svc,
+            wrapper,
+            anthropic,
+            tokens,
+            cfg,
+            grpc_url,
+        }
     }
 
     async fn list_models(&self, who: Who) -> Result<Vec<ModelAlias>, tonic::Status> {
@@ -220,7 +236,11 @@ impl Harness {
             .map(|r| r.into_inner().model_aliases)
     }
 
-    async fn turn(&self, who: Who, req: SessionTurnRequest) -> Result<SessionTurnResponse, tonic::Status> {
+    async fn turn(
+        &self,
+        who: Who,
+        req: SessionTurnRequest,
+    ) -> Result<SessionTurnResponse, tonic::Status> {
         self.wrapper
             .generate_session_turn(who.signed(req))
             .await
@@ -229,7 +249,9 @@ impl Harness {
 
     /// Opens `who`'s callback stream and answers frames per `answer`.
     async fn open_callback(&self, who: Who, answer: Answer) -> CallbackClient {
-        let mut client = LlmProxyClient::connect(self.grpc_url.clone()).await.unwrap();
+        let mut client = LlmProxyClient::connect(self.grpc_url.clone())
+            .await
+            .unwrap();
         let (tx, rx) = mpsc::channel::<McpResponse>(16);
         let mut frames = client
             .broker_tool_callback(who.signed(ReceiverStream::new(rx)))
@@ -274,7 +296,10 @@ impl Harness {
         })
         .await
         .expect("callback stream registered");
-        CallbackClient { seen, ended: ended_rx }
+        CallbackClient {
+            seen,
+            ended: ended_rx,
+        }
     }
 }
 
@@ -319,7 +344,8 @@ fn turn_request(thread_id: &str, with_tools: bool) -> SessionTurnRequest {
             vec![ToolSpec {
                 name: "post_room".to_string(),
                 description: "post to the room".to_string(),
-                input_schema_json: r#"{"type":"object","properties":{"text":{"type":"string"}}}"#.to_string(),
+                input_schema_json: r#"{"type":"object","properties":{"text":{"type":"string"}}}"#
+                    .to_string(),
                 ..Default::default()
             }]
         } else {
@@ -345,7 +371,10 @@ fn tool_result_text(msg: &Message) -> &str {
 async fn list_models_through_the_wrapper_returns_a_non_empty_list() {
     let h = Harness::start().await;
     let aliases = h.list_models(SCOTTY).await.expect("list_models succeeds");
-    assert!(!aliases.is_empty(), "llmproxy should always know at least one model alias");
+    assert!(
+        !aliases.is_empty(),
+        "llmproxy should always know at least one model alias"
+    );
 }
 
 #[tokio::test]
@@ -355,7 +384,10 @@ async fn list_models_is_the_same_regardless_of_caller() {
     // that stays true rather than assuming it.
     let h = Harness::start().await;
     let as_scotty = h.list_models(SCOTTY).await.expect("succeeds");
-    let as_someone_else = h.list_models(Who("/system", "reveille")).await.expect("succeeds");
+    let as_someone_else = h
+        .list_models(Who("/system", "reveille"))
+        .await
+        .expect("succeeds");
     assert_eq!(as_scotty, as_someone_else);
 }
 
@@ -393,11 +425,20 @@ async fn a_tool_use_round_trips_through_the_callers_stream() {
     let h = Harness::start().await;
     let callback = h.open_callback(FRANK_A, Answer::Result).await;
 
-    let resp = h.turn(FRANK_A, turn_request("t-1", true)).await.expect("turn succeeds");
+    let resp = h
+        .turn(FRANK_A, turn_request("t-1", true))
+        .await
+        .expect("turn succeeds");
 
     assert_eq!(resp.stop_reason, StopReason::EndTurn as i32);
-    assert_eq!(resp.appended.len(), 3, "assistant tool_use, tool_result, assistant text");
-    assert!(matches!(&resp.appended[0].content[0].block, Some(Block::ToolUse(tu)) if tu.name == "post_room"));
+    assert_eq!(
+        resp.appended.len(),
+        3,
+        "assistant tool_use, tool_result, assistant text"
+    );
+    assert!(
+        matches!(&resp.appended[0].content[0].block, Some(Block::ToolUse(tu)) if tu.name == "post_room")
+    );
     assert_eq!(tool_result_text(&resp.appended[1]), "posted");
     assert!(matches!(&resp.appended[2].content[0].block, Some(Block::Text(t)) if t == "done"));
     let usage = resp.usage.unwrap();
@@ -410,7 +451,10 @@ async fn a_tool_use_round_trips_through_the_callers_stream() {
     assert_eq!(frames[0]["jsonrpc"], "2.0");
     assert_eq!(frames[0]["method"], "tools/call");
     assert_eq!(frames[0]["params"]["name"], "post_room");
-    assert_eq!(frames[0]["params"]["arguments"], serde_json::json!({"text": "on it"}));
+    assert_eq!(
+        frames[0]["params"]["arguments"],
+        serde_json::json!({"text": "on it"})
+    );
     assert_eq!(frames[0]["params"]["_meta"]["turn"], "turn-t-1");
     assert!(frames[0]["id"].is_string());
 
@@ -472,7 +516,10 @@ async fn the_same_thread_id_in_two_tenants_is_two_sessions_on_two_streams() {
 #[tokio::test]
 async fn tools_without_a_callback_stream_are_refused_before_any_provider_call() {
     let h = Harness::start().await;
-    let err = h.turn(FRANK_A, turn_request("t-1", true)).await.unwrap_err();
+    let err = h
+        .turn(FRANK_A, turn_request("t-1", true))
+        .await
+        .unwrap_err();
     assert_eq!(err.code(), tonic::Code::FailedPrecondition);
     assert!(h.anthropic.bodies().is_empty());
 }
@@ -520,7 +567,11 @@ async fn a_stream_drop_mid_turn_ends_the_turn_callback_lost() {
     assert_eq!(resp.stop_reason, StopReason::CallbackLost as i32);
     assert!(tool_result_text(&resp.appended[1]).contains("callback stream was lost"));
     assert_eq!(callback.frames().len(), 1);
-    assert_eq!(h.anthropic.bodies().len(), 1, "no provider call after the loss");
+    assert_eq!(
+        h.anthropic.bodies().len(),
+        1,
+        "no provider call after the loss"
+    );
 }
 
 /// (f) kill switch: PERMISSION_DENIED on every rpc, open stream closed on reload.
@@ -539,7 +590,10 @@ async fn a_blocked_caller_is_denied_and_its_open_stream_is_closed() {
         .unwrap();
     assert!(h.svc.callbacks.get(&FRANK_A.spiffe()).is_none());
 
-    let err = h.turn(FRANK_A, turn_request("t-1", false)).await.unwrap_err();
+    let err = h
+        .turn(FRANK_A, turn_request("t-1", false))
+        .await
+        .unwrap_err();
     assert_eq!(err.code(), tonic::Code::PermissionDenied);
     let err = h
         .wrapper
@@ -580,7 +634,11 @@ async fn blocking_the_spiffe_scheme_stops_every_caller() {
         .await
         .unwrap_err();
     assert_eq!(err.code(), tonic::Code::PermissionDenied);
-    assert_eq!(h.anthropic.bodies().len(), 0, "no provider call while stopped");
+    assert_eq!(
+        h.anthropic.bodies().len(),
+        0,
+        "no provider call while stopped"
+    );
 
     cfg.blocked_callers.clear();
     h.svc.set_config(&cfg).unwrap();
@@ -612,7 +670,11 @@ async fn the_turn_ceiling_stops_before_another_provider_call() {
     let resp = h.turn(FRANK_A, req).await.unwrap();
 
     assert_eq!(resp.stop_reason, StopReason::MaxToolRounds as i32);
-    assert_eq!(resp.appended.len(), 2, "ends on the tool_result, never a dangling tool_use");
+    assert_eq!(
+        resp.appended.len(),
+        2,
+        "ends on the tool_result, never a dangling tool_use"
+    );
     assert_eq!(h.anthropic.bodies().len(), 1);
 }
 
@@ -661,7 +723,9 @@ fn no_session_id_rides_the_request_and_no_llm_tool_session_rpcs_exist() {
         .and_then(|rest| rest.split("\n}").next())
         .expect("SessionTurnRequest is declared");
     assert!(
-        !message.lines().any(|l| !l.trim_start().starts_with("//") && l.contains("session_id")),
+        !message
+            .lines()
+            .any(|l| !l.trim_start().starts_with("//") && l.contains("session_id")),
         "SessionTurnRequest must not carry a session_id field"
     );
     for source in [include_str!("session.rs"), include_str!("service.rs")] {
@@ -710,14 +774,18 @@ async fn federation_mode_sends_the_exchanged_token_and_ignores_llm_credential() 
 #[tokio::test]
 async fn federation_ids_from_the_env_select_federation_mode_without_config_ids() {
     let env_ids = FederationIds::from_parts("fdrl_env", "org", "svac_env", "wrkspc_env").unwrap();
-    let h = Harness::start_with_env(|_| {}, Some(Arc::new(MockAssertions::default())), env_ids).await;
+    let h =
+        Harness::start_with_env(|_| {}, Some(Arc::new(MockAssertions::default())), env_ids).await;
     h.wrapper
         .generate_completion_as_service(SCOTTY.signed(completion()))
         .await
         .expect("completion succeeds");
 
     assert_eq!(h.tokens.exchanges(), 1);
-    assert_eq!(h.tokens.bodies.lock().unwrap()[0]["federation_rule_id"], "fdrl_env");
+    assert_eq!(
+        h.tokens.bodies.lock().unwrap()[0]["federation_rule_id"],
+        "fdrl_env"
+    );
     let (headers, _) = h.anthropic.requests.lock().unwrap()[0].clone();
     assert_eq!(headers["authorization"], "Bearer tok-1");
     assert!(headers.get("x-api-key").is_none());
@@ -739,8 +807,16 @@ async fn an_expired_token_with_a_failing_exchange_is_unavailable() {
         .await
         .unwrap_err();
     assert_eq!(err.code(), tonic::Code::Unavailable);
-    assert!(err.message().contains("token exchange failed"), "{}", err.message());
-    assert_eq!(h.anthropic.bodies().len(), 1, "no provider call without a credential");
+    assert!(
+        err.message().contains("token exchange failed"),
+        "{}",
+        err.message()
+    );
+    assert_eq!(
+        h.anthropic.bodies().len(),
+        1,
+        "no provider call without a credential"
+    );
 }
 
 #[tokio::test]
@@ -783,7 +859,10 @@ fn last_text(resp: &SessionTurnResponse) -> &str {
 async fn a_marker_from_a_listed_tenant_gets_the_scripted_reply() {
     let h = Harness::start_with(scripted_for_tenant_a, None).await;
     let resp = h
-        .turn(FRANK_A, marked_turn("t-1", "@frank [[script:echo]] marker m1"))
+        .turn(
+            FRANK_A,
+            marked_turn("t-1", "@frank [[script:echo]] marker m1"),
+        )
         .await
         .expect("scripted turn succeeds");
     assert_eq!(resp.stop_reason, StopReason::EndTurn as i32);
@@ -796,19 +875,28 @@ async fn a_marker_from_a_listed_tenant_gets_the_scripted_reply() {
 async fn a_marker_from_an_unlisted_tenant_goes_to_the_real_model() {
     let h = Harness::start_with(scripted_for_tenant_a, None).await;
     let resp = h
-        .turn(FRANK_B, marked_turn("t-1", "@frank [[script:echo]] marker m1"))
+        .turn(
+            FRANK_B,
+            marked_turn("t-1", "@frank [[script:echo]] marker m1"),
+        )
         .await
         .expect("turn succeeds");
     assert_eq!(last_text(&resp), "done");
     let bodies = h.anthropic.bodies();
     assert_eq!(bodies.len(), 1);
-    assert_eq!(bodies[0]["messages"][0]["content"], "@frank [[script:echo]] marker m1");
+    assert_eq!(
+        bodies[0]["messages"][0]["content"],
+        "@frank [[script:echo]] marker m1"
+    );
 }
 
 #[tokio::test]
 async fn a_listed_tenant_without_a_marker_goes_to_the_real_model() {
     let h = Harness::start_with(scripted_for_tenant_a, None).await;
-    let resp = h.turn(FRANK_A, turn_request("t-1", false)).await.expect("turn succeeds");
+    let resp = h
+        .turn(FRANK_A, turn_request("t-1", false))
+        .await
+        .expect("turn succeeds");
     assert_eq!(last_text(&resp), "done");
     assert_eq!(h.anthropic.bodies().len(), 1);
 }
@@ -822,7 +910,10 @@ async fn an_unknown_script_is_invalid_argument() {
         .unwrap_err();
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
     assert_eq!(err.message(), "unknown script: \"no-such-script\"");
-    let err = h.turn(FRANK_A, marked_turn("t-1", "[[script:../echo]]")).await.unwrap_err();
+    let err = h
+        .turn(FRANK_A, marked_turn("t-1", "[[script:../echo]]"))
+        .await
+        .unwrap_err();
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
     assert!(h.anthropic.bodies().is_empty());
 }

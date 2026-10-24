@@ -48,7 +48,10 @@ pub struct KernelAssertions(pub Arc<ServiceManager>);
 #[tonic::async_trait]
 impl AssertionSource for KernelAssertions {
     async fn assertion(&self) -> Result<String, String> {
-        self.0.token_for_external(ASSERTION_AUDIENCE).await.map_err(|e| e.to_string())
+        self.0
+            .token_for_external(ASSERTION_AUDIENCE)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -70,7 +73,12 @@ impl FederationIds {
         service_account_id: &str,
         workspace_id: &str,
     ) -> Result<Option<Self>, String> {
-        let ids = [federation_rule_id, organization_id, service_account_id, workspace_id];
+        let ids = [
+            federation_rule_id,
+            organization_id,
+            service_account_id,
+            workspace_id,
+        ];
         if ids.iter().all(|id| id.is_empty()) {
             return Ok(None);
         }
@@ -117,7 +125,11 @@ pub struct Federation {
 }
 
 impl Federation {
-    pub fn new(token_url: String, ids: FederationIds, assertions: Arc<dyn AssertionSource>) -> Self {
+    pub fn new(
+        token_url: String,
+        ids: FederationIds,
+        assertions: Arc<dyn AssertionSource>,
+    ) -> Self {
         Self {
             http: reqwest::Client::new(),
             token_url,

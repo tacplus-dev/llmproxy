@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use llmproxy_model::types::services::llmproxy::llmproxy::Config as LlmProxyConfig;
 use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::Config as LlmProxyConfig;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -44,12 +44,18 @@ impl Ledger {
 
     pub fn spent(&mut self, caller: &str, bucket: BudgetBucket) -> i64 {
         self.roll_day();
-        self.spent.get(&(caller.to_string(), bucket)).copied().unwrap_or(0)
+        self.spent
+            .get(&(caller.to_string(), bucket))
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn charge(&mut self, caller: &str, row: UsageRow) {
         self.roll_day();
-        *self.spent.entry((caller.to_string(), row.bucket)).or_insert(0) += row.cost_micro_usd;
+        *self
+            .spent
+            .entry((caller.to_string(), row.bucket))
+            .or_insert(0) += row.cost_micro_usd;
         tracing::info!(
             session_id = %row.session_id,
             bucket = row.bucket.as_str_name(),
@@ -83,5 +89,9 @@ impl Ledger {
 }
 
 fn today() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64 / DAY_MS
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+        / DAY_MS
 }
