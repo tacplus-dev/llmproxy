@@ -857,16 +857,6 @@ async fn the_texas811_review_script_answers_a_completion_with_repair_step() {
     assert!(h.anthropic.bodies().is_empty());
 }
 
-// llmproxy.proto's auth_services admits beagle's pigeons by a string literal (a
-// proto option cannot name a generated Rust const); this pins that literal to
-// tacplus's generated pigeon_service_path_for, so changing either side fails here.
-#[test]
-fn auth_services_pigeon_literal_is_the_generated_beagle_pigeon_path() {
-    let proto = include_str!("../proto/services/llmproxy.proto");
-    let option = proto
-        .lines()
-        .find(|l| l.trim_start().starts_with("option (spec.service_s2s)"))
-        .expect("llmproxy.proto declares spec.service_s2s");
-    let pattern = format!("\"{}\"", grpcserver::authorizer::pigeon_service_path_for("beagle"));
-    assert!(option.contains(&pattern), "{option} must list {pattern}");
-}
+// The caller list used to be a literal here (beagle's pigeon path pinned to
+// pigeon_service_path_for); it is now auth_services_from_fleet, filled by the
+// fleet build from the fleet's declared clients. See tacplus-dev/llmproxy#3.

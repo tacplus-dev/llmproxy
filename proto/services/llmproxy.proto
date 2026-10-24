@@ -333,24 +333,14 @@ service LlmProxy {
   // S2S ONLY (same doctrine as weather.proto's Weather service, same reasoning:
   // ValidateServiceSurfaces rejects a service mixing caller-surface kinds).
   //
-  // auth_services names every service allowed to call this proxy at all. Unlike
-  // eventbus's Admin service (auth_services: ["*"], the Critical finding from the
-  // 2026-09-13 audit), this is a real, named allow-list — the whole point of this
-  // service existing is that NOT every service may spend the one shared credential.
-  // Add a service here only deliberately, the same way llm_credential_services
-  // itself used to be a deliberate, named list.
-  //
-  // A29 widens it to the persona services: scottyagent (the Scotty persona until
-  // the ticketing split, Q7) and each dog service that exists in this build
-  // (beagle, otto, tally; the rest join as their protos land, CP2). scotty stays
-  // while it still calls GenerateCompletionAsService (BQ5).
-  //
-  // beagle's pigeons (the 811 pigeon) call as their coop-minted workload,
-  // service path beagle/workloads/pigeon-<run_id> (run_id a lowercase ULID).
-  // Narrow to beagle on purpose, not [^/]+/workloads/... (schematic, 10-18).
-  // A proto option cannot name tacplus's generated pigeon_service_path_for, so
-  // llmproxy's service_tests.rs pins this literal to pigeon_service_path_for("beagle").
-  option (spec.service_s2s) = {auth_services: ["scotty", "scottyagent", "beagle", "otto", "tally", "beagle/workloads/pigeon-[a-z0-9]+"]};
+  // The caller list is the fleet's, not this proto's: the fleet build admits
+  // exactly the services in the fleet that declare (spec.grpc_s2s_client) of
+  // llmproxy.LlmProxy (doppelganger in the proof fleet; Scotty's services in
+  // Seabeam's). A standalone build of this repo admits no callers. Not every
+  // service may spend the shared model credential, which is the point of this
+  // service existing; the fleet decides which ones, deliberately, by declaring
+  // the client.
+  option (spec.service_s2s) = {auth_services_from_fleet: true};
 
   // GenerateCompletionAsService — no human in the loop (a system job, a rule firing, a
   // background summarization — anything the calling service does on its own
