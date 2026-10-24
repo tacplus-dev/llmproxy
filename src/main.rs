@@ -4,9 +4,9 @@ mod callbacks;
 mod federation;
 mod scripted;
 mod service;
+mod session;
 #[cfg(test)]
 mod service_tests;
-mod session;
 #[cfg(test)]
 mod test_support;
 

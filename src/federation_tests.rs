@@ -49,15 +49,9 @@ async fn exchange_body_is_the_jwt_bearer_grant_with_the_four_ids_and_a_fresh_ass
     assert_eq!(bodies.len(), 2);
     let mut jtis = HashSet::new();
     for body in &bodies {
-        assert_eq!(
-            body["grant_type"],
-            "urn:ietf:params:oauth:grant-type:jwt-bearer"
-        );
+        assert_eq!(body["grant_type"], "urn:ietf:params:oauth:grant-type:jwt-bearer");
         assert_eq!(body["federation_rule_id"], "fdrl_test");
-        assert_eq!(
-            body["organization_id"],
-            "00000000-0000-0000-0000-000000000001"
-        );
+        assert_eq!(body["organization_id"], "00000000-0000-0000-0000-000000000001");
         assert_eq!(body["service_account_id"], "svac_test");
         assert_eq!(body["workspace_id"], "wrkspc_test");
         let assertion = token::token::Token::parse(body["assertion"].as_str().unwrap()).unwrap();
@@ -88,11 +82,7 @@ async fn a_token_inside_the_advisory_window_is_served_while_a_background_refresh
     let (endpoint, federation) = federation(240).await;
     assert_eq!(federation.token().await.unwrap(), "tok-1");
 
-    assert_eq!(
-        federation.token().await.unwrap(),
-        "tok-1",
-        "the caller does not wait"
-    );
+    assert_eq!(federation.token().await.unwrap(), "tok-1", "the caller does not wait");
     until_exchanges(&endpoint, 2).await;
 }
 
@@ -135,9 +125,7 @@ fn the_env_ids_are_all_four_or_none_and_the_api_key_is_never_read() {
         let read = &read;
         move |name: &str| {
             read.lock().unwrap().push(name.to_string());
-            vars.iter()
-                .find(|(k, _)| *k == name)
-                .map(|(_, v)| v.to_string())
+            vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
         }
     };
 
@@ -161,9 +149,5 @@ fn the_env_ids_are_all_four_or_none_and_the_api_key_is_never_read() {
         .expect("a partial set is an error");
     assert!(err.contains("all four"), "{err}");
 
-    assert!(!read
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|name| name == "ANTHROPIC_API_KEY"));
+    assert!(!read.lock().unwrap().iter().any(|name| name == "ANTHROPIC_API_KEY"));
 }

@@ -20,9 +20,8 @@ use std::collections::HashMap;
 
 use llmproxy_model::types::services::llmproxy::llmproxy::{
     content_block::Block, generate_completion_response::Result as GenResult, ContentBlock,
-    GenerateCompletionRequest, GenerateCompletionResponse, Message as ProtoMessage, ModelAlias,
-    ModelRoute, Role as ProtoRole, ToolSpec as ProtoToolSpec, ToolUse as ProtoToolUse,
-    Usage as ProtoUsage,
+    GenerateCompletionRequest, GenerateCompletionResponse, Message as ProtoMessage, ModelAlias, ModelRoute,
+    Role as ProtoRole, ToolSpec as ProtoToolSpec, ToolUse as ProtoToolUse, Usage as ProtoUsage,
 };
 
 use crate::federation::Federation;
@@ -40,33 +39,20 @@ pub struct ModelTable {
 
 impl ModelTable {
     pub fn new(routes: &[ModelRoute]) -> Self {
-        Self {
-            routes: routes
-                .iter()
-                .map(|r| (r.alias.clone(), r.clone()))
-                .collect(),
-        }
+        Self { routes: routes.iter().map(|r| (r.alias.clone(), r.clone())).collect() }
     }
 
     /// The route for an alias, or UnknownModelAlias — the gate every call
     /// passes first.
     pub fn resolve(&self, alias: &str) -> Result<&ModelRoute, AnthropicError> {
-        self.routes
-            .get(alias)
-            .ok_or_else(|| AnthropicError::UnknownModelAlias(alias.to_string()))
+        self.routes.get(alias).ok_or_else(|| AnthropicError::UnknownModelAlias(alias.to_string()))
     }
 
     /// The aliases served, for ListModels, in a stable order.
     pub fn aliases(&self) -> Vec<ModelAlias> {
         let mut names: Vec<&String> = self.routes.keys().collect();
         names.sort();
-        names
-            .into_iter()
-            .map(|name| ModelAlias {
-                name: name.clone(),
-                ..Default::default()
-            })
-            .collect()
+        names.into_iter().map(|name| ModelAlias { name: name.clone(), ..Default::default() }).collect()
     }
 }
 
@@ -120,10 +106,7 @@ struct WireToolSpec {
 pub enum AnthropicError {
     UnknownModelAlias(String),
     Request(reqwest::Error),
-    Api {
-        status: u16,
-        body: String,
-    },
+    Api { status: u16, body: String },
     UnexpectedResponseShape(String),
     /// No provider credential could be obtained (D22 federation: the cached
     /// token is expired and the exchange is failing).
@@ -342,10 +325,7 @@ impl AnthropicClient {
         .expect("Request serializes: every field type has a Serialize impl");
 
         let reply = parse_turn_reply(&self.post_messages(&body).await?)?;
-        let (per_in, per_out) = (
-            route.input_micro_usd_per_token,
-            route.output_micro_usd_per_token,
-        );
+        let (per_in, per_out) = (route.input_micro_usd_per_token, route.output_micro_usd_per_token);
         Ok(TurnReply {
             cost_micro_usd: reply.input_tokens * per_in + reply.output_tokens * per_out,
             ..reply
@@ -358,11 +338,7 @@ impl AnthropicClient {
         &self,
         req: &GenerateCompletionRequest,
     ) -> Result<GenerateCompletionResponse, AnthropicError> {
-        let model = self
-            .models
-            .resolve(&req.model_alias)?
-            .provider_model
-            .as_str();
+        let model = self.models.resolve(&req.model_alias)?.provider_model.as_str();
         let body = build_request_body(model, req)?;
         parse_response(&self.post_messages(&body).await?)
     }
@@ -617,14 +593,8 @@ mod tests {
         }]);
         let err = table.resolve("gpt-5").unwrap_err();
         assert!(matches!(err, AnthropicError::UnknownModelAlias(a) if a == "gpt-5"));
-        assert_eq!(
-            table.resolve("claude-sonnet").unwrap().provider_model,
-            "claude-sonnet-4-5"
-        );
-        assert!(matches!(
-            ModelTable::default().resolve("claude-sonnet"),
-            Err(AnthropicError::UnknownModelAlias(_))
-        ));
+        assert_eq!(table.resolve("claude-sonnet").unwrap().provider_model, "claude-sonnet-4-5");
+        assert!(matches!(ModelTable::default().resolve("claude-sonnet"), Err(AnthropicError::UnknownModelAlias(_))));
     }
 
     #[test]
@@ -688,13 +658,11 @@ mod tests {
                 ProtoMessage {
                     role: ProtoRole::User as i32,
                     content: vec![ContentBlock {
-                        block: Some(Block::ToolResult(
-                            llmproxy_model::types::services::llmproxy::llmproxy::ToolResult {
-                                tool_use_id: "toolu_1".to_string(),
-                                content: "{}".to_string(),
-                                ..Default::default()
-                            },
-                        )),
+                        block: Some(Block::ToolResult(llmproxy_model::types::services::llmproxy::llmproxy::ToolResult {
+                            tool_use_id: "toolu_1".to_string(),
+                            content: "{}".to_string(),
+                            ..Default::default()
+                        })),
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -724,10 +692,7 @@ mod tests {
         });
 
         let parsed = parse_response(&body).expect("parses");
-        assert_eq!(
-            parsed.result,
-            Some(GenResult::Text("the answer is 4".to_string()))
-        );
+        assert_eq!(parsed.result, Some(GenResult::Text("the answer is 4".to_string())));
         assert_eq!(parsed.usage.unwrap().input_tokens, 10);
     }
 
@@ -738,22 +703,10 @@ mod tests {
             "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 90},
         });
         let reply = parse_turn_reply(&body).expect("parses");
-        assert_eq!(
-            (
-                reply.input_tokens,
-                reply.output_tokens,
-                reply.cache_read_input_tokens
-            ),
-            (10, 5, 90)
-        );
+        assert_eq!((reply.input_tokens, reply.output_tokens, reply.cache_read_input_tokens), (10, 5, 90));
 
         let body = json!({"content": [], "usage": {"input_tokens": 10, "output_tokens": 5}});
-        assert_eq!(
-            parse_turn_reply(&body)
-                .expect("parses")
-                .cache_read_input_tokens,
-            0
-        );
+        assert_eq!(parse_turn_reply(&body).expect("parses").cache_read_input_tokens, 0);
     }
 
     #[test]
@@ -791,16 +744,8 @@ mod tests {
     #[test]
     fn list_models_is_the_configured_aliases_in_order() {
         let table = ModelTable::new(&[
-            ModelRoute {
-                alias: "b".to_string(),
-                provider_model: "m2".to_string(),
-                ..Default::default()
-            },
-            ModelRoute {
-                alias: "a".to_string(),
-                provider_model: "m1".to_string(),
-                ..Default::default()
-            },
+            ModelRoute { alias: "b".to_string(), provider_model: "m2".to_string(), ..Default::default() },
+            ModelRoute { alias: "a".to_string(), provider_model: "m1".to_string(), ..Default::default() },
         ]);
         let names: Vec<String> = table.aliases().into_iter().map(|m| m.name).collect();
         assert_eq!(names, vec!["a".to_string(), "b".to_string()]);

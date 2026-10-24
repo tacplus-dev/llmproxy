@@ -9,12 +9,12 @@ use std::time::Duration;
 use serde_json::json;
 use tonic::Status;
 
-use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 use llmproxy_model::types::services::llmproxy::llmproxy::{
     content_block::Block, ContentBlock, Message as ProtoMessage, Role as ProtoRole,
     SessionTurnRequest, SessionTurnResponse, StopReason, ToolResult as ProtoToolResult,
     ToolUse as ProtoToolUse, Usage as ProtoUsage,
 };
+use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 
 use crate::anthropic::{
     session_user_id, to_wire_messages, ReplyBlock, TurnReply, WireMessage, WireToolResult,
@@ -182,15 +182,13 @@ impl LlmProxyService {
     ) -> (Vec<WireToolResult>, bool) {
         let timeout = Duration::from_millis(cfg.tool_call_timeout_ms as u64);
         let grace = Duration::from_millis(cfg.callback_reopen_grace_ms as u64);
-        let lost_result = |call: &ToolCall| {
-            WireToolResult {
+        let lost_result = |call: &ToolCall| WireToolResult {
             tool_use_id: call.id.to_string(),
             content: format!(
                 "tool {} did not answer: the callback stream was lost; the call may or may not have taken effect; check before retrying",
                 call.name
             ),
             is_error: true,
-        }
         };
 
         let Some(stream) = self.callbacks.wait_for(caller, grace).await else {
@@ -199,10 +197,7 @@ impl LlmProxyService {
 
         let mut sent = Vec::with_capacity(calls.len());
         for call in calls {
-            let frame_id = format!(
-                "llmproxy-{}",
-                self.next_frame.fetch_add(1, Ordering::Relaxed)
-            );
+            let frame_id = format!("llmproxy-{}", self.next_frame.fetch_add(1, Ordering::Relaxed));
             let frame = json!({
                 "jsonrpc": "2.0",
                 "id": frame_id,
@@ -253,10 +248,7 @@ impl LlmProxyService {
 /// message.
 fn tool_result(tool_use_id: &str, payload: &str) -> WireToolResult {
     let (content, is_error) = match serde_json::from_str::<serde_json::Value>(payload) {
-        Err(e) => (
-            format!("the tool answered with an unparsable frame: {e}"),
-            true,
-        ),
+        Err(e) => (format!("the tool answered with an unparsable frame: {e}"), true),
         Ok(frame) => match (frame.get("error"), frame.get("result")) {
             (Some(error), _) => (
                 error
@@ -281,15 +273,9 @@ fn tool_result(tool_use_id: &str, payload: &str) -> WireToolResult {
                             .join("\n")
                     })
                     .unwrap_or_default(),
-                result
-                    .get("isError")
-                    .and_then(|e| e.as_bool())
-                    .unwrap_or(false),
+                result.get("isError").and_then(|e| e.as_bool()).unwrap_or(false),
             ),
-            (None, None) => (
-                "the tool answered with neither result nor error".to_string(),
-                true,
-            ),
+            (None, None) => ("the tool answered with neither result nor error".to_string(), true),
         },
     };
     WireToolResult {
