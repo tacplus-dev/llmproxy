@@ -383,6 +383,20 @@ fn to_wire_content(blocks: &[ContentBlock]) -> WireContent {
 
 /// Builds the `/v1/messages` request body. Pure and unit-tested separately from
 /// the network call so the request shape can be checked without a credential or
+/// The output budget sent to the provider. The proto declares max_tokens'
+/// default (4096) but a unary request carries 0 when the caller sets nothing,
+/// and 0 on the wire is a reply with no room for a single token: Anthropic
+/// returned `stop_reason max_tokens` and an empty content array.
+const DEFAULT_MAX_TOKENS: i32 = 4096;
+
+fn output_budget(requested: i32) -> i32 {
+    if requested > 0 {
+        requested
+    } else {
+        DEFAULT_MAX_TOKENS
+    }
+}
+
 /// a live server.
 fn build_request_body(
     model: &str,
@@ -409,7 +423,7 @@ fn build_request_body(
 
     Ok(serde_json::to_value(Request {
         model,
-        max_tokens: req.max_tokens,
+        max_tokens: output_budget(req.max_tokens),
         system: &req.system,
         messages,
         tools: to_wire_tools(&req.tools)?,
@@ -611,6 +625,19 @@ mod tests {
         assert!(matches!(err, AnthropicError::UnknownModelAlias(a) if a == "gpt-5"));
         assert_eq!(table.resolve("claude-sonnet").unwrap().provider_model, "claude-sonnet-4-5");
         assert!(matches!(ModelTable::default().resolve("claude-sonnet"), Err(AnthropicError::UnknownModelAlias(_))));
+    }
+
+    #[test]
+    fn an_unset_max_tokens_is_the_default_budget_not_zero() {
+        let req = GenerateCompletionRequest {
+            model_alias: "claude-sonnet".to_string(),
+            messages: vec![text_message(ProtoRole::User as i32, "hello")],
+            ..Default::default()
+        };
+        let body = build_request_body("claude-sonnet-4-5", &req).unwrap();
+        assert_eq!(body["max_tokens"], json!(DEFAULT_MAX_TOKENS));
+        let explicit = GenerateCompletionRequest { max_tokens: 123, ..req };
+        assert_eq!(build_request_body("claude-sonnet-4-5", &explicit).unwrap()["max_tokens"], json!(123));
     }
 
     #[test]
