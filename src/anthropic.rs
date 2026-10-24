@@ -556,9 +556,25 @@ fn parse_response(body: &serde_json::Value) -> Result<GenerateCompletionResponse
         }
     }
 
-    Err(AnthropicError::UnexpectedResponseShape(
-        "no text or tool_use block in content".to_string(),
-    ))
+    // Name what did come back: the stop reason and each block's type. A bare
+    // "no block" said nothing about a reply that cost tokens.
+    let stop_reason = body
+        .get("stop_reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<none>");
+    let block_types: Vec<&str> = body
+        .get("content")
+        .and_then(|v| v.as_array())
+        .map(|blocks| {
+            blocks
+                .iter()
+                .map(|b| b.get("type").and_then(|t| t.as_str()).unwrap_or("<untyped>"))
+                .collect()
+        })
+        .unwrap_or_default();
+    Err(AnthropicError::UnexpectedResponseShape(format!(
+        "no text or tool_use block in content (stop_reason {stop_reason}, blocks {block_types:?})"
+    )))
 }
 
 #[cfg(test)]
