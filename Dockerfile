@@ -1,8 +1,5 @@
-# Public base, deliberately and visibly — same choice and same reasoning as
-# services/weather/Dockerfile: the hardened private base
-# (registry.gitlab.com/seabeam/schematic/containers/debian/schematic-debian-1-2)
-# is not pullable with the credentials on this machine. A real deploy should
-# switch to it once that's sorted.
+# Public base, deliberately and visibly: tacplus-dev builds with nothing from a
+# private registry (PROVENANCE.md names the hardened base this replaces).
 FROM debian:trixie-slim
 
 # The generated ServiceManager talks TLS to kernel, and this service also
@@ -14,7 +11,7 @@ RUN apt-get update -qq \
  && rm -rf /var/lib/apt/lists/*
 
 # No grpc_health_probe: the operator renders tcpSocket probes on 8443
-# (see schematic.grpcProbe8443 in the chart), so the binary would be dead weight.
+# (grpcProbe8443 in the chart), so the binary would be dead weight.
 COPY target/release/llmproxy /usr/local/bin/llmproxy
 # The harness-scripted stand-in's scripts (src/scripted.rs SCRIPTS_DIR).
 COPY scripts /usr/share/llmproxy/scripts

@@ -1,10 +1,9 @@
 //! The Anthropic side of `llmproxy`: the URLs, the HTTP call, and translation
 //! between Anthropic's own wire shape and this service's generated proto types.
 //!
-//! Moved here from `services/scotty/src/llm.rs` 2026-09-15
-//! (decisions/llm-proxy-design-proposal-2026-09-14.md,
-//! decisions/llm-gateway-mcp-session-auth-2026-09-14.md) — scotty no longer
-//! holds the credential or talks to Anthropic directly; this is the one place
+//! Moved here from the first calling service's `src/llm.rs` 2026-09-15 (the
+//! design proposal and the session-auth design, PROVENANCE.md) — that service
+//! no longer holds the credential or talks to Anthropic directly; this is the one place
 //! that does, for every calling service. The request/response SHAPE and
 //! (de)serialization logic below is carried over near-verbatim from llm.rs;
 //! what's new is the translation to/from `llmproxy_model`'s generated types

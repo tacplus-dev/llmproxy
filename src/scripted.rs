@@ -1,5 +1,5 @@
-//! The `harness-scripted` model stand-in (decisions/harness-scotty-scenarios-
-//! 2026-10-02.md §1.3, HS1/HS8). For a caller in one of
+//! The `harness-scripted` model stand-in (the harness scenarios, PROVENANCE.md,
+//! §1.3, HS1/HS8). For a caller in one of
 //! `Config.scripted_model_tenants` whose newest user turn carries
 //! `[[script:<name>]]`, the provider reply comes from `scripts/<name>.yaml`
 //! instead of Anthropic. Everything around it stays real: tool_use still goes

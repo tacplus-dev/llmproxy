@@ -1,5 +1,5 @@
 //! D22: the Anthropic credential by jwt-bearer exchange instead of a static key
-//! (decisions/backlog-scotty-slices-2026-09-30.md §4).
+//! (the slices backlog, PROVENANCE.md, §4).
 //!
 //! get a kernel JWT (aud = https://api.anthropic.com, fresh jti) → `POST
 //! {base}{oauth_token_path}` with the RFC 7523 jwt-bearer grant and the four
@@ -86,7 +86,7 @@ impl FederationIds {
     }
 
     /// The ids the operator puts on the pod from GitLab variables
-    /// (decisions/anthropic-wif-setup-2026-10-03.md). ANTHROPIC_API_KEY is never
+    /// (the WIF setup, PROVENANCE.md). ANTHROPIC_API_KEY is never
     /// read: it would shadow federation.
     pub fn from_env(var: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, String> {
         let get = |name: &str| var(name).unwrap_or_default();

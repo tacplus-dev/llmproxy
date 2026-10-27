@@ -1,4 +1,4 @@
-# Pins for generated Rust. Copied 2026-10-23 from schematic platform/proto/dependencies.yaml (rust section).
+# Pins for generated Rust. Copied 2026-10-23 from the upstream platform proto (rust section; PROVENANCE.md).
 tools:
     go: "1.23"
     java: "17"

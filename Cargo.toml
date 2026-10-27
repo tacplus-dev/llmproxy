@@ -13,7 +13,7 @@ tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.14", features = ["transport"] }
 tracing = "0.1"
 async-trait = "0.1"
-# Anthropic HTTP client — moved here from services/scotty/src/llm.rs 2026-09-15,
+# Anthropic HTTP client — moved here from the first caller's src/llm.rs 2026-09-15,
 # same reasoning that file gave for reqwest directly (see this crate's src/anthropic.rs):
 # Anthropic's wire shape is not something we author as our own proto message, so
 # tacplus's typed-http-client codegen (which is typed against OUR OWN proto

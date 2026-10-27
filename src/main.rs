@@ -17,9 +17,8 @@ use llmproxy_model::s2sm::ServiceManager;
 
 #[tokio::main]
 async fn main() {
-    // The chassis logger, NOT tracing_subscriber::fmt(). See services/scotty/
-    // src/main.rs's comment on install_bootstrap for why this matters
-    // everywhere in this fleet; it matters MORE here — this is the one
+    // The chassis logger, NOT tracing_subscriber::fmt(): it redacts, which
+    // matters everywhere in this fleet; it matters MORE here — this is the one
     // service in the fleet that ever holds the real LLM credential, and an
     // unredacted log line is the one place it could leave the entitlement
     // model behind.

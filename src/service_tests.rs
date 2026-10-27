@@ -108,7 +108,7 @@ struct Who(&'static str, &'static str);
 
 const FRANK_A: Who = Who(TENANT_A, "frank");
 const FRANK_B: Who = Who(TENANT_B, "frank");
-const SCOTTY: Who = Who("/system", "scotty");
+const AGENT: Who = Who("/system", "agent");
 
 impl Who {
     fn spiffe(self) -> String {
@@ -353,7 +353,7 @@ fn tool_result_text(msg: &Message) -> &str {
 #[tokio::test]
 async fn list_models_through_the_wrapper_returns_a_non_empty_list() {
     let h = Harness::start().await;
-    let aliases = h.list_models(SCOTTY).await.expect("list_models succeeds");
+    let aliases = h.list_models(AGENT).await.expect("list_models succeeds");
     assert!(!aliases.is_empty(), "llmproxy should always know at least one model alias");
 }
 
@@ -363,9 +363,9 @@ async fn list_models_is_the_same_regardless_of_caller() {
     // comment: "this carries no policy of its own to protect") — asserting
     // that stays true rather than assuming it.
     let h = Harness::start().await;
-    let as_scotty = h.list_models(SCOTTY).await.expect("succeeds");
+    let as_agent = h.list_models(AGENT).await.expect("succeeds");
     let as_someone_else = h.list_models(Who("/system", "reveille")).await.expect("succeeds");
-    assert_eq!(as_scotty, as_someone_else);
+    assert_eq!(as_agent, as_someone_else);
 }
 
 #[tokio::test]
@@ -380,7 +380,7 @@ async fn an_unsigned_call_is_refused() {
 async fn the_static_key_is_sent_as_x_api_key_when_no_federation_ids_are_set() {
     let h = Harness::start().await;
     h.wrapper
-        .generate_completion_as_service(SCOTTY.signed(GenerateCompletionRequest {
+        .generate_completion_as_service(AGENT.signed(GenerateCompletionRequest {
             model_alias: "claude-sonnet".to_string(),
             messages: vec![user_text("hi")],
             ..Default::default()
@@ -585,7 +585,7 @@ async fn blocking_the_spiffe_scheme_stops_every_caller() {
     }
     let err = h
         .wrapper
-        .generate_completion_as_service(SCOTTY.signed(completion()))
+        .generate_completion_as_service(AGENT.signed(completion()))
         .await
         .unwrap_err();
     assert_eq!(err.code(), tonic::Code::PermissionDenied);
@@ -706,7 +706,7 @@ fn completion() -> GenerateCompletionRequest {
 async fn federation_mode_sends_the_exchanged_token_and_ignores_llm_credential() {
     let h = Harness::start_with(federation_ids, Some(Arc::new(MockAssertions::default()))).await;
     h.wrapper
-        .generate_completion_as_service(SCOTTY.signed(completion()))
+        .generate_completion_as_service(AGENT.signed(completion()))
         .await
         .expect("completion succeeds");
 
@@ -721,7 +721,7 @@ async fn federation_ids_from_the_env_select_federation_mode_without_config_ids()
     let env_ids = FederationIds::from_parts("fdrl_env", "org", "svac_env", "wrkspc_env").unwrap();
     let h = Harness::start_with_env(|_| {}, Some(Arc::new(MockAssertions::default())), env_ids).await;
     h.wrapper
-        .generate_completion_as_service(SCOTTY.signed(completion()))
+        .generate_completion_as_service(AGENT.signed(completion()))
         .await
         .expect("completion succeeds");
 
@@ -737,14 +737,14 @@ async fn an_expired_token_with_a_failing_exchange_is_unavailable() {
     let h = Harness::start_with(federation_ids, Some(Arc::new(MockAssertions::default()))).await;
     h.tokens.expires_in.store(0, Ordering::SeqCst);
     h.wrapper
-        .generate_completion_as_service(SCOTTY.signed(completion()))
+        .generate_completion_as_service(AGENT.signed(completion()))
         .await
         .expect("first completion succeeds");
 
     h.tokens.fail.store(true, Ordering::SeqCst);
     let err = h
         .wrapper
-        .generate_completion_as_service(SCOTTY.signed(completion()))
+        .generate_completion_as_service(AGENT.signed(completion()))
         .await
         .unwrap_err();
     assert_eq!(err.code(), tonic::Code::Unavailable);
@@ -767,7 +767,7 @@ async fn federation_ids_without_an_assertion_source_or_half_set_are_config_error
 }
 
 // ---------------------------------------------------------------------------
-// harness-scripted stand-in (harness-scotty-scenarios §1.3)
+// harness-scripted stand-in (the harness scenarios §1.3)
 // ---------------------------------------------------------------------------
 
 fn scripted_for_tenant_a(cfg: &mut LlmProxyConfig) {
