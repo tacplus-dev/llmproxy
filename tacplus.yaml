@@ -1,3 +1,4 @@
+tacplus: "2.4"
 language: rust
 # Rust crate is <last segment>-model, matching Cargo.toml (llmproxy-model).
 pkg: com.github.tacplusdev.llmproxy
