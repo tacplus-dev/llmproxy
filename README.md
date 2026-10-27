@@ -11,7 +11,7 @@ A tacplus service: Rust, generated model in `target/generated-sources`.
 
 The gates ([ci.yml](.github/workflows/ci.yml)): generate with tacplus at the floor `tacplus.yaml` declares
 (`tacplus build`, or `ci/tacplus.sh build` where there is no `tacplus` on the path), then
-`cargo build --locked` and `cargo test --locked`.
+`cargo build --locked` and `cargo test --locked` (with `protoc` on the path: a dependency's build script runs it).
 
 ## Releasing
 

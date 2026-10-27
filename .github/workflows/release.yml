@@ -79,7 +79,7 @@ jobs:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu protobuf-compiler
           rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
           rustup default stable
           cargo build --release --locked --target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu
