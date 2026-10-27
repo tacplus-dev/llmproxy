@@ -1,0 +1,23 @@
+name: ci
+
+# The gates: generate with tacplus at the floor tacplus.yaml declares (ci/tacplus.sh), build, test. The release
+# runs them on its tag first (release.yml).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - run: ci/tacplus.sh build
+      - run: cargo build --locked
+      - run: cargo test --locked

@@ -26,3 +26,10 @@ ARG TARGETARCH
 COPY launcher-linux-${TARGETARCH} /usr/local/bin/launcher
 ENV LAUNCH_CMD="llmproxy" HEALTH_PORT=8443
 ENTRYPOINT ["launcher"]
+
+# Set by the release (ci/release-image.sh): the version without its v, and the commit.
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/tacplus-dev/llmproxy" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION"
