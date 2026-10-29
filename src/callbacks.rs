@@ -47,7 +47,14 @@ impl CallbackStream {
         self.pending.lock().unwrap().insert(frame_id.to_string(), tx);
         let out = self.out.lock().unwrap().clone();
         let sent = match out {
-            Some(out) => out.send(Ok(McpRequest { payload })).await.is_ok(),
+            Some(out) => out
+                .send(Ok(McpRequest {
+                    payload,
+                    // llmproxy is a platform service, not tenant_owned: its carrier names no tenant.
+                    tenant: String::new(),
+                }))
+                .await
+                .is_ok(),
             None => false,
         };
         if !sent {

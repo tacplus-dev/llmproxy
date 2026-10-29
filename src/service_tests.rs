@@ -78,6 +78,7 @@ impl Authorizer for TokenAuthorizer {
 
     async fn check_at_or_below(
         &self,
+        _full_method: &str,
         authorization: Option<&str>,
         _target_namespace: &str,
     ) -> Result<HashMap<String, String>, tonic::Status> {
@@ -86,6 +87,7 @@ impl Authorizer for TokenAuthorizer {
 
     async fn authenticate(
         &self,
+        _full_method: &str,
         authorization: Option<&str>,
     ) -> Result<HashMap<String, String>, tonic::Status> {
         Self::identity(authorization)
@@ -247,11 +249,14 @@ impl Harness {
             .into_inner();
 
         let seen = Arc::new(Mutex::new(Vec::new()));
+        let tenants = Arc::new(Mutex::new(Vec::new()));
         let (ended_tx, ended_rx) = tokio::sync::oneshot::channel();
         let recorded = seen.clone();
+        let recorded_tenants = tenants.clone();
         let mut tx = Some(tx);
         tokio::spawn(async move {
             while let Some(Ok(frame)) = frames.next().await {
+                recorded_tenants.lock().unwrap().push(frame.tenant);
                 let frame: serde_json::Value = serde_json::from_str(&frame.payload).unwrap();
                 recorded.lock().unwrap().push(frame.clone());
                 match answer {
@@ -283,7 +288,7 @@ impl Harness {
         })
         .await
         .expect("callback stream registered");
-        CallbackClient { seen, ended: ended_rx }
+        CallbackClient { seen, tenants, ended: ended_rx }
     }
 }
 
@@ -296,12 +301,18 @@ enum Answer {
 
 struct CallbackClient {
     seen: Arc<Mutex<Vec<serde_json::Value>>>,
+    tenants: Arc<Mutex<Vec<String>>>,
     ended: tokio::sync::oneshot::Receiver<()>,
 }
 
 impl CallbackClient {
     fn frames(&self) -> Vec<serde_json::Value> {
         self.seen.lock().unwrap().clone()
+    }
+
+    /// Each frame's `tenant`, in the order the frames arrived.
+    fn tenants(&self) -> Vec<String> {
+        self.tenants.lock().unwrap().clone()
     }
 }
 
@@ -422,6 +433,8 @@ async fn a_tool_use_round_trips_through_the_callers_stream() {
     assert_eq!(frames[0]["params"]["arguments"], serde_json::json!({"text": "on it"}));
     assert_eq!(frames[0]["params"]["_meta"]["turn"], "turn-t-1");
     assert!(frames[0]["id"].is_string());
+    // llmproxy is a platform service, not tenant_owned: its frames name no tenant.
+    assert_eq!(callback.tenants(), vec![String::new()]);
 
     let second = &h.anthropic.bodies()[1];
     let result = &second["messages"].as_array().unwrap().last().unwrap()["content"][0];
