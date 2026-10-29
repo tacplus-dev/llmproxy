@@ -5,3 +5,5 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 
 - 2026-10-28 looper issue tokio 1.53.1 (RUSTSEC-2026-0386, AsyncFd I/O-safety unsoundness): bump to 1.54.1 (#10, e6555fc)
 - 2026-10-28 looper release v0.1.1 (https://github.com/tacplus-dev/llmproxy/releases/tag/v0.1.1)
+- 2026-10-29 looper issue tacplus floor 2.4 is behind the latest line 2.5: bump it (McpRequest.tenant and Authorizer signatures change) (#11, 59f153b)
+- 2026-10-29 looper release v0.1.2 (https://github.com/tacplus-dev/llmproxy/releases/tag/v0.1.2)
