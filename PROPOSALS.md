@@ -15,5 +15,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   and the current release is v0.1.2, but ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4".
   #11 asks for the floor there too; ROADMAP.md is Jody's and loopers do not edit it, so it needs an agent at his
   request: "tacplus floor 2.5" (and the current line).
+- **A floor patch can turn the gates red with no change here** (2026-10-30, #12): ci/tacplus.sh runs the floor's
+  latest patch, and tacplus 2.5.3 changed the generated chassis' dependencies (aws-lc-rs for rsa and the
+  elliptic-curve stack, tacplus-dev/tacplus#186), so `cargo build --locked` failed on an untouched main until
+  Cargo.lock was re-resolved. A scheduled run of ci.yml (e.g. daily) would catch the next one before a release tag
+  does; the platform could also say in tacplus' release notes when a patch changes the generated dependency set.
 
 ## Promoted / declined
