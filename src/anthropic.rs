@@ -9,51 +9,26 @@
 //! what's new is the translation to/from `llmproxy_model`'s generated types
 //! (`build_request`/`to_generate_completion_response`), since callers now speak
 //! this service's own proto, not Anthropic's JSON, directly.
+//!
+//! Which model an alias means is decided before a call gets here
+//! (providers.rs): every call takes the vendor's own model id.
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use std::collections::HashMap;
-
 use llmproxy_model::types::services::llmproxy::llmproxy::{
     content_block::Block, generate_completion_response::Result as GenResult, ContentBlock,
-    GenerateCompletionRequest, GenerateCompletionResponse, Message as ProtoMessage, ModelAlias, ModelRoute,
-    Role as ProtoRole, ToolSpec as ProtoToolSpec, ToolUse as ProtoToolUse, Usage as ProtoUsage,
+    GenerateCompletionRequest, GenerateCompletionResponse, Message as ProtoMessage,
+    Role as ProtoRole, ToolSpec as ProtoToolSpec, ToolUse as ProtoToolUse, Usage as ProtoUsage, Vendor,
 };
 
 use crate::federation::Federation;
+use crate::providers::{looks_preview, ListedModel, ProviderError};
 
 pub const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-
-/// The alias table: `Config.models`, keyed by alias. The provider model and
-/// its price come from config, so a model changes with a config push, never a
-/// rebuild (this replaces the code table and LP4(b)'s in-code pricing).
-#[derive(Clone, Default)]
-pub struct ModelTable {
-    routes: HashMap<String, ModelRoute>,
-}
-
-impl ModelTable {
-    pub fn new(routes: &[ModelRoute]) -> Self {
-        Self { routes: routes.iter().map(|r| (r.alias.clone(), r.clone())).collect() }
-    }
-
-    /// The route for an alias, or UnknownModelAlias — the gate every call
-    /// passes first.
-    pub fn resolve(&self, alias: &str) -> Result<&ModelRoute, AnthropicError> {
-        self.routes.get(alias).ok_or_else(|| AnthropicError::UnknownModelAlias(alias.to_string()))
-    }
-
-    /// The aliases served, for ListModels, in a stable order.
-    pub fn aliases(&self) -> Vec<ModelAlias> {
-        let mut names: Vec<&String> = self.routes.keys().collect();
-        names.sort();
-        names.into_iter().map(|name| ModelAlias { name: name.clone(), ..Default::default() }).collect()
-    }
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WireMessage {
@@ -99,41 +74,6 @@ struct WireToolSpec {
     name: String,
     description: String,
     input_schema: serde_json::Value,
-}
-
-#[derive(Debug)]
-pub enum AnthropicError {
-    UnknownModelAlias(String),
-    Request(reqwest::Error),
-    Api { status: u16, body: String },
-    UnexpectedResponseShape(String),
-    /// No provider credential could be obtained (D22 federation: the cached
-    /// token is expired and the exchange is failing).
-    Credential(String),
-}
-
-impl std::fmt::Display for AnthropicError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AnthropicError::UnknownModelAlias(a) => write!(f, "unknown model_alias: {a}"),
-            AnthropicError::Request(e) => write!(f, "request to Anthropic failed: {e}"),
-            AnthropicError::Api { status, body } => {
-                write!(f, "Anthropic API returned {status}: {body}")
-            }
-            AnthropicError::UnexpectedResponseShape(s) => {
-                write!(f, "unexpected Anthropic response shape: {s}")
-            }
-            AnthropicError::Credential(s) => write!(f, "no Anthropic credential: {s}"),
-        }
-    }
-}
-
-impl std::error::Error for AnthropicError {}
-
-impl From<reqwest::Error> for AnthropicError {
-    fn from(e: reqwest::Error) -> Self {
-        AnthropicError::Request(e)
-    }
 }
 
 /// Where the provider credential comes from (D22 §4.2 step 6, mode select).
@@ -231,71 +171,95 @@ pub struct AnthropicClient {
     http: reqwest::Client,
     credential: Credential,
     base_url: String,
-    models: ModelTable,
 }
 
 impl AnthropicClient {
-    pub fn models(&self) -> &ModelTable {
-        &self.models
-    }
-
-    pub fn new(credential: Credential, base_url: Option<String>, models: ModelTable) -> Self {
+    pub fn new(credential: Credential, base_url: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             credential,
-            models,
             base_url: base_url
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| ANTHROPIC_API_BASE.to_string()),
         }
     }
 
-    /// POSTs one `/v1/messages` body with this client's credential and returns
-    /// the parsed JSON reply.
-    async fn post_messages(
-        &self,
-        body: &serde_json::Value,
-    ) -> Result<serde_json::Value, AnthropicError> {
-        let request = self
-            .http
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(body);
+    /// Sends one request with this client's credential and returns the parsed
+    /// JSON reply.
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<serde_json::Value, ProviderError> {
+        let request = request.header("anthropic-version", ANTHROPIC_VERSION);
         let request = match &self.credential {
             Credential::ApiKey(key) => request.header("x-api-key", key),
             Credential::Federation(federation) => request.bearer_auth(
                 federation
                     .token()
                     .await
-                    .map_err(|e| AnthropicError::Credential(e.to_string()))?,
+                    .map_err(|e| ProviderError::Credential(e.to_string()))?,
             ),
         };
-        let resp = request.send().await?;
+        crate::providers::send_json(Vendor::Anthropic, request).await
+    }
 
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            return Err(AnthropicError::Api {
-                status: status.as_u16(),
-                body: text,
-            });
+    /// POSTs one `/v1/messages` body.
+    async fn post_messages(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, ProviderError> {
+        self.send(self.http.post(format!("{}/v1/messages", self.base_url)).json(body)).await
+    }
+
+    /// Every model `/v1/models` lists, for `latest` routes. Anthropic has no
+    /// previews in its listing; an id that says so still counts as one.
+    pub async fn list_models(&self) -> Result<Vec<ListedModel>, ProviderError> {
+        #[derive(Deserialize)]
+        struct Model {
+            id: String,
+        }
+        #[derive(Deserialize)]
+        struct Page {
+            data: Vec<Model>,
+            #[serde(default)]
+            has_more: bool,
+            #[serde(default)]
+            last_id: Option<String>,
         }
 
-        serde_json::from_str(&text)
-            .map_err(|e| AnthropicError::UnexpectedResponseShape(format!("invalid JSON: {e}")))
+        let mut models = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let mut query = vec![("limit", "1000".to_string())];
+            if let Some(after) = &after {
+                query.push(("after_id", after.clone()));
+            }
+            let body = self
+                .send(self.http.get(format!("{}/v1/models", self.base_url)).query(&query))
+                .await?;
+            let page: Page = serde_json::from_value(body).map_err(|e| {
+                ProviderError::UnexpectedResponseShape(Vendor::Anthropic, format!("model listing: {e}"))
+            })?;
+            models.extend(page.data.into_iter().map(|m| ListedModel {
+                preview: looks_preview(&m.id),
+                id: m.id,
+            }));
+            match page.last_id {
+                Some(last) if page.has_more => after = Some(last),
+                _ => return Ok(models),
+            }
+        }
     }
 
     /// One provider call of a session turn (A29). `messages` is the turn's
     /// running wire history, so tool_results keep their `is_error` flag.
+    /// `cost_micro_usd` is left 0: the caller knows the route's price.
     pub async fn create_turn_message(
         &self,
-        model_alias: &str,
+        model: &str,
         system: &str,
         max_tokens: i32,
         messages: &[WireMessage],
         tools: &[ProtoToolSpec],
         user_id: &str,
-    ) -> Result<TurnReply, AnthropicError> {
+    ) -> Result<TurnReply, ProviderError> {
         #[derive(Serialize)]
         struct Metadata<'a> {
             user_id: &'a str,
@@ -311,8 +275,6 @@ impl AnthropicClient {
             metadata: Metadata<'a>,
         }
 
-        let route = self.models.resolve(model_alias)?;
-        let model = route.provider_model.as_str();
         let body = serde_json::to_value(Request {
             model,
             max_tokens,
@@ -323,21 +285,16 @@ impl AnthropicClient {
         })
         .expect("Request serializes: every field type has a Serialize impl");
 
-        let reply = parse_turn_reply(&self.post_messages(&body).await?)?;
-        let (per_in, per_out) = (route.input_micro_usd_per_token, route.output_micro_usd_per_token);
-        Ok(TurnReply {
-            cost_micro_usd: reply.input_tokens * per_in + reply.output_tokens * per_out,
-            ..reply
-        })
+        parse_turn_reply(&self.post_messages(&body).await?)
     }
 
     /// One non-streaming Anthropic `/v1/messages` call, taking and returning this
     /// service's own generated proto types.
     pub async fn generate_completion(
         &self,
+        model: &str,
         req: &GenerateCompletionRequest,
-    ) -> Result<GenerateCompletionResponse, AnthropicError> {
-        let model = self.models.resolve(&req.model_alias)?.provider_model.as_str();
+    ) -> Result<GenerateCompletionResponse, ProviderError> {
         let body = build_request_body(model, req)?;
         parse_response(&self.post_messages(&body).await?)
     }
@@ -388,7 +345,7 @@ fn to_wire_content(blocks: &[ContentBlock]) -> WireContent {
 /// returned `stop_reason max_tokens` and an empty content array.
 const DEFAULT_MAX_TOKENS: i32 = 4096;
 
-fn output_budget(requested: i32) -> i32 {
+pub(crate) fn output_budget(requested: i32) -> i32 {
     if requested > 0 {
         requested
     } else {
@@ -400,7 +357,7 @@ fn output_budget(requested: i32) -> i32 {
 fn build_request_body(
     model: &str,
     req: &GenerateCompletionRequest,
-) -> Result<serde_json::Value, AnthropicError> {
+) -> Result<serde_json::Value, ProviderError> {
     #[derive(Serialize)]
     struct Request<'a> {
         model: &'a str,
@@ -430,7 +387,7 @@ fn build_request_body(
     .expect("Request serializes: every field type has a Serialize impl"))
 }
 
-fn to_wire_tools(tools: &[ProtoToolSpec]) -> Result<Vec<WireToolSpec>, AnthropicError> {
+fn to_wire_tools(tools: &[ProtoToolSpec]) -> Result<Vec<WireToolSpec>, ProviderError> {
     tools
         .iter()
         .map(|t| {
@@ -438,7 +395,7 @@ fn to_wire_tools(tools: &[ProtoToolSpec]) -> Result<Vec<WireToolSpec>, Anthropic
                 name: t.name.clone(),
                 description: t.description.clone(),
                 input_schema: serde_json::from_str(&t.input_schema_json).map_err(|e| {
-                    AnthropicError::UnexpectedResponseShape(format!(
+                    ProviderError::UnexpectedResponseShape(Vendor::Anthropic, format!(
                         "tool {} has invalid input_schema_json: {e}",
                         t.name
                     ))
@@ -451,7 +408,7 @@ fn to_wire_tools(tools: &[ProtoToolSpec]) -> Result<Vec<WireToolSpec>, Anthropic
 /// Parses a `/v1/messages` reply for the turn loop: every text and tool_use
 /// block in order (a reply can carry several tool_use blocks), plus usage.
 /// `cost_micro_usd` is filled in by the caller, which knows the model.
-fn parse_turn_reply(body: &serde_json::Value) -> Result<TurnReply, AnthropicError> {
+fn parse_turn_reply(body: &serde_json::Value) -> Result<TurnReply, ProviderError> {
     #[derive(Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     enum WireResponseBlock {
@@ -483,7 +440,7 @@ fn parse_turn_reply(body: &serde_json::Value) -> Result<TurnReply, AnthropicErro
     }
 
     let parsed: Response = serde_json::from_value(body.clone())
-        .map_err(|e| AnthropicError::UnexpectedResponseShape(format!("{e}: {body}")))?;
+        .map_err(|e| ProviderError::UnexpectedResponseShape(Vendor::Anthropic, format!("{e}: {body}")))?;
     Ok(TurnReply {
         blocks: parsed
             .content
@@ -506,7 +463,7 @@ fn parse_turn_reply(body: &serde_json::Value) -> Result<TurnReply, AnthropicErro
 /// Parses an Anthropic `/v1/messages` response body into this service's own
 /// [`GenerateCompletionResponse`]. Pure and unit-tested against canned response
 /// JSON — no network needed.
-fn parse_response(body: &serde_json::Value) -> Result<GenerateCompletionResponse, AnthropicError> {
+fn parse_response(body: &serde_json::Value) -> Result<GenerateCompletionResponse, ProviderError> {
     #[derive(Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     enum WireResponseBlock {
@@ -536,7 +493,7 @@ fn parse_response(body: &serde_json::Value) -> Result<GenerateCompletionResponse
     }
 
     let parsed: Response = serde_json::from_value(body.clone())
-        .map_err(|e| AnthropicError::UnexpectedResponseShape(format!("{e}: {body}")))?;
+        .map_err(|e| ProviderError::UnexpectedResponseShape(Vendor::Anthropic, format!("{e}: {body}")))?;
 
     let usage = parsed.usage.map(|u| ProtoUsage {
         input_tokens: u.input_tokens,
@@ -585,7 +542,7 @@ fn parse_response(body: &serde_json::Value) -> Result<GenerateCompletionResponse
                 .collect()
         })
         .unwrap_or_default();
-    Err(AnthropicError::UnexpectedResponseShape(format!(
+    Err(ProviderError::UnexpectedResponseShape(Vendor::Anthropic, format!(
         "no text or tool_use block in content (stop_reason {stop_reason}, blocks {block_types:?})"
     )))
 }
@@ -604,26 +561,6 @@ mod tests {
             }],
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn unknown_model_alias_is_rejected() {
-        // build_request_body takes an ALREADY-RESOLVED provider model string
-        // (see generate_completion: ModelTable::resolve runs first), so it has
-        // no opinion on model_alias itself — what's under test is that the
-        // table, the actual gate, refuses an alias config did not declare,
-        // and that an empty table refuses everything.
-        let table = ModelTable::new(&[ModelRoute {
-            alias: "claude-sonnet".to_string(),
-            provider_model: "claude-sonnet-4-5".to_string(),
-            input_micro_usd_per_token: 3,
-            output_micro_usd_per_token: 15,
-            ..Default::default()
-        }]);
-        let err = table.resolve("gpt-5").unwrap_err();
-        assert!(matches!(err, AnthropicError::UnknownModelAlias(a) if a == "gpt-5"));
-        assert_eq!(table.resolve("claude-sonnet").unwrap().provider_model, "claude-sonnet-4-5");
-        assert!(matches!(ModelTable::default().resolve("claude-sonnet"), Err(AnthropicError::UnknownModelAlias(_))));
     }
 
     #[test]
@@ -780,17 +717,6 @@ mod tests {
     fn rejects_response_with_no_recognized_block() {
         let body = json!({"content": []});
         let err = parse_response(&body).unwrap_err();
-        assert!(matches!(err, AnthropicError::UnexpectedResponseShape(_)));
-    }
-
-    #[test]
-    fn list_models_is_the_configured_aliases_in_order() {
-        let table = ModelTable::new(&[
-            ModelRoute { alias: "b".to_string(), provider_model: "m2".to_string(), ..Default::default() },
-            ModelRoute { alias: "a".to_string(), provider_model: "m1".to_string(), ..Default::default() },
-        ]);
-        let names: Vec<String> = table.aliases().into_iter().map(|m| m.name).collect();
-        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
-        assert!(ModelTable::default().aliases().is_empty());
+        assert!(matches!(err, ProviderError::UnexpectedResponseShape(Vendor::Anthropic, _)));
     }
 }

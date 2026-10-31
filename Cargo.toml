@@ -28,6 +28,8 @@ serde_yaml = "0.9"
 tokio-stream = "0.1"
 # Anthropic metadata.user_id is a hash of the session id (backlog §1.4).
 sha2 = "0.10"
+# ModelRoute.latest_pattern, matched against a vendor's model listing (src/routes.rs).
+regex = "1"
 
 [dev-dependencies]
 token = { path = "target/generated-sources/model/chassis/token" }

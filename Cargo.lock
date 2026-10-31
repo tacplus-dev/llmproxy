@@ -1309,6 +1309,7 @@ dependencies = [
  "key",
  "llmproxy-model",
  "logger",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

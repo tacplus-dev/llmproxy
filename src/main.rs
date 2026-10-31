@@ -2,6 +2,9 @@ mod anthropic;
 mod budget;
 mod callbacks;
 mod federation;
+mod openai;
+mod providers;
+mod routes;
 mod scripted;
 mod service;
 mod session;
@@ -9,6 +12,7 @@ mod session;
 mod service_tests;
 #[cfg(test)]
 mod test_support;
+mod vertex;
 
 use std::error::Error;
 use std::sync::Arc;
@@ -56,12 +60,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // D22: the federation ids come from the pod env and the assertion from the
     // generated token path (federation.rs).
     let env_ids = federation::FederationIds::from_env(|name| std::env::var(name).ok())?;
-    let svc = Arc::new(service::LlmProxyService::new(
+    let mut svc = service::LlmProxyService::new(
         sm.config().spiffe_trust_domain.clone(),
         Some(Arc::new(federation::KernelAssertions(sm.clone()))),
         env_ids,
         scripted::SCRIPTS_DIR.into(),
-    ));
+    );
+    // Google's own clients honour GCE_METADATA_HOST; so does Vertex AI's token here.
+    if let Ok(host) = std::env::var("GCE_METADATA_HOST") {
+        svc = svc.with_metadata_base(format!("http://{host}"));
+    }
+    let svc = Arc::new(svc);
     let handler = Arc::new(service::LlmProxyServiceHandler::new(svc));
 
     sm.run(handler).await

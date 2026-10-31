@@ -21,4 +21,27 @@ the looper then marks it `promoted` or `declined` here with the date.
   Cargo.lock was re-resolved. A scheduled run of ci.yml (e.g. daily) would catch the next one before a release tag
   does; the platform could also say in tacplus' release notes when a patch changes the generated dependency set.
 
+- **The nightly scan rechecks xAI for keyless auth** (2026-10-31, #13): Jody's decision on #13 keeps xAI (Grok) out
+  until it offers workload identity federation or another keyless method, and asks that "the nightly scan rechecks
+  xAI's docs". The nightly scan is tacplus-dev/looper's, so the check belongs there: a finding when xAI documents
+  federation, so an issue here can add the adapter (README, Vendors).
+- **Deploying OpenAI and Google** (2026-10-31, #13): the adapters are built, but going live needs, beside Jody's
+  written data terms (README): an OpenAI Workload Identity Provider that trusts the fleet kernel's JWT issuer (OpenAI
+  lists Kubernetes, Google Cloud and SPIFFE; a generic OIDC issuer needs OpenAI support), with a mapping to a
+  dedicated, spending-capped project service account, and its three ids in `Config.openai_*`; and, for Vertex AI,
+  llmproxy's Kubernetes service account bound to a Google service account with `roles/aiplatform.user`, with
+  `Config.vertex_project_id`. Both are operator (deployment) work, not this repository's. If the kernel's issuer is
+  not accepted, the alternatives are a GKE projected service-account token or, since OpenAI accepts SPIFFE
+  JWT-SVIDs, the fleet's own SPIFFE identity.
+- **Per-model prices for `latest` routes** (2026-10-31, #13): a `latest` route's price covers whatever it resolves
+  to, so when the latest model's price differs, the route is mispriced until its config changes. A price table
+  keyed by provider model in Config, with the route's price as the fallback, would meter each resolved model at
+  its own price.
+- **Retire `llm_credential`** (2026-10-31, #13): Jody restated the rule on #13, "never a static key", yet Anthropic's
+  static-key transition path (D22) is still in the code, used when no federation ids are set. Once every fleet
+  runs federation, removing it (and the operator's Secret) would make the rule true of the code.
+- **Tools and session turns on OpenAI and Google** (2026-10-31, #13): those vendors are text in, text out today
+  (the panel needs no more); tool use and `GenerateSessionTurn` run on Anthropic routes only. With the
+  output-schema field (#2), each vendor's structured-output mode could carry the schema instead of the prompt.
+
 ## Promoted / declined

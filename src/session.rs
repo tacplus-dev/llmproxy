@@ -14,13 +14,14 @@ use llmproxy_model::types::services::llmproxy::llmproxy::{
     SessionTurnRequest, SessionTurnResponse, StopReason, ToolResult as ProtoToolResult,
     ToolUse as ProtoToolUse, Usage as ProtoUsage,
 };
-use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
+use llmproxy_model::types::services::llmproxy::llmproxy::{BudgetBucket, Vendor};
 
 use crate::anthropic::{
     session_user_id, to_wire_messages, ReplyBlock, TurnReply, WireMessage, WireToolResult,
 };
 use crate::budget::{Ledger, UsageRow};
-use crate::service::{to_status, LlmProxyService};
+use crate::providers::{vendor_name, ProviderError, Resolved};
+use crate::service::{to_status, LlmProxyService, SCRIPTED_MODEL};
 
 struct ToolCall<'a> {
     id: &'a str,
@@ -32,6 +33,8 @@ struct ToolCall<'a> {
 struct Turn {
     appended: Vec<ProtoMessage>,
     usage: ProtoUsage,
+    provider_model: String,
+    vendor: Vendor,
 }
 
 impl Turn {
@@ -40,6 +43,8 @@ impl Turn {
             appended: self.appended,
             stop_reason: stop_reason as i32,
             usage: Some(self.usage),
+            provider_model: self.provider_model,
+            vendor: self.vendor as i32,
             ..Default::default()
         }
     }
@@ -70,7 +75,24 @@ impl LlmProxyService {
             0 => cfg.max_tool_rounds_ceiling,
             n => n.min(cfg.max_tool_rounds_ceiling),
         };
-        let client = self.anthropic();
+        let providers = self.providers();
+        // The model is resolved once: every provider call of the turn goes to
+        // it, even if a `latest` alias moves meanwhile. The tool loop is
+        // Anthropic's Messages API, so the route must be Anthropic's.
+        let resolved = match &script {
+            Some(_) => None,
+            None => {
+                let resolved = providers.resolve(&req.model_alias).await.map_err(to_status)?;
+                if resolved.vendor != Vendor::Anthropic {
+                    return Err(to_status(ProviderError::Unsupported(format!(
+                        "GenerateSessionTurn runs on Anthropic routes only; {} is {}",
+                        req.model_alias,
+                        vendor_name(resolved.vendor)
+                    ))));
+                }
+                Some(resolved)
+            }
+        };
         tracing::info!(
             session_id = %session_id,
             parent_thread_id = %req.parent_thread_id,
@@ -85,6 +107,10 @@ impl LlmProxyService {
                 bucket: bucket as i32,
                 ..Default::default()
             },
+            provider_model: resolved
+                .as_ref()
+                .map_or(SCRIPTED_MODEL.to_string(), |r| r.provider_model.clone()),
+            vendor: resolved.as_ref().map_or(Vendor::Unspecified, |r| r.vendor),
         };
         let mut rounds = 0;
         loop {
@@ -93,11 +119,13 @@ impl LlmProxyService {
                 return Ok(turn.finish(StopReason::BudgetExhausted));
             }
 
-            let reply = match &script {
-                Some(script) => script.turn_reply(&req.thread_id, &req.messages, &turn.appended)?,
-                None => match client
+            let reply = match (&script, &resolved) {
+                (Some(script), _) => script.turn_reply(&req.thread_id, &req.messages, &turn.appended)?,
+                (None, None) => unreachable!("a turn without a script has a resolved route"),
+                (None, Some(resolved)) => match providers
+                    .anthropic
                     .create_turn_message(
-                        &req.model_alias,
+                        &resolved.provider_model,
                         &req.system,
                         req.max_tokens,
                         &wire,
@@ -106,7 +134,7 @@ impl LlmProxyService {
                     )
                     .await
                 {
-                    Ok(reply) => reply,
+                    Ok(reply) => priced(reply, resolved),
                     // Nothing has happened yet: the caller gets the real error.
                     Err(e) if turn.appended.is_empty() => return Err(to_status(e)),
                     // Tools have already run: hand back what the turn produced.
@@ -240,6 +268,15 @@ impl LlmProxyService {
             }));
         }
         (results, lost)
+    }
+}
+
+/// The reply with its cost at the route's price.
+fn priced(reply: TurnReply, route: &Resolved) -> TurnReply {
+    TurnReply {
+        cost_micro_usd: reply.input_tokens * route.input_micro_usd_per_token
+            + reply.output_tokens * route.output_micro_usd_per_token,
+        ..reply
     }
 }
 

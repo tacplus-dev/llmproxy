@@ -8,8 +8,10 @@
 //! tonic client (an in-process callback client). The provider is a mock
 //! Messages API (test_support.rs) reached through `default_provider_base_url`.
 //!
-//! Covers backlog §1.8 items 1–3 (A29) and the service-level half of §4.6
-//! item 1 (D22: the federated token on the wire, UNAVAILABLE when it fails).
+//! Covers backlog §1.8 items 1–3 (A29), the service-level half of §4.6
+//! item 1 (D22: the federated token on the wire, UNAVAILABLE when it fails),
+//! and #13's vendors: OpenAI and Google beside Anthropic, `latest` aliases and
+//! the resolved model on every response.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -27,8 +29,8 @@ use llmproxy_model::types::services::llmproxy::llmproxy::llm_proxy_client::LlmPr
 use llmproxy_model::types::services::llmproxy::llmproxy::llm_proxy_server::LlmProxy;
 use llmproxy_model::types::services::llmproxy::llmproxy::{
     content_block::Block, Config as LlmProxyConfig, ContentBlock, GenerateCompletionRequest,
-    GetBudgetRequest, ListModelsRequest, Message, ModelAlias, Role, SessionTurnRequest,
-    SessionTurnResponse, StopReason, ToolSpec,
+    GenerateCompletionResponse, GetBudgetRequest, ListModelsRequest, Message, ModelAlias, Role, SessionTurnRequest,
+    SessionTurnResponse, StopReason, ToolSpec, Vendor,
 };
 use llmproxy_model::types::services::llmproxy::helpers::config_defaults;
 use llmproxy_model::types::services::llmproxy::llmproxy::{BudgetBucket, ModelRoute};
@@ -37,7 +39,7 @@ use llmproxy_model::types::sys::mcp::McpResponse;
 
 use crate::federation::{AssertionSource, FederationIds};
 use crate::service::LlmProxyService;
-use crate::test_support::{now_secs, serve, MockAnthropic, MockAssertions, MockTokenEndpoint};
+use crate::test_support::{now_secs, serve, MockAnthropic, MockAssertions, MockTokenEndpoint, MockVendor};
 
 const TRUST_DOMAIN: &str = "td.test";
 const TENANT_A: &str = "/tenants/a";
@@ -147,6 +149,8 @@ struct Harness {
     wrapper: ValidationWrapper,
     anthropic: Arc<MockAnthropic>,
     tokens: Arc<MockTokenEndpoint>,
+    /// OpenAI, Vertex AI and the metadata server.
+    vendor: Arc<MockVendor>,
     cfg: LlmProxyConfig,
     grpc_url: String,
 }
@@ -168,6 +172,28 @@ impl Harness {
         assertions: Option<Arc<dyn AssertionSource>>,
         env_ids: Option<FederationIds>,
     ) -> Harness {
+        Harness::start_full(configure, assertions, env_ids, crate::providers::LIVE_VENDORS.to_vec()).await
+    }
+
+    /// Every vendor live and configured against the mocks, with `routes`.
+    async fn start_vendors(routes: Vec<ModelRoute>) -> Harness {
+        Harness::start_full(
+            |c| c.models.extend(routes),
+            Some(Arc::new(MockAssertions::default())),
+            None,
+            vec![Vendor::Anthropic, Vendor::Openai, Vendor::Google],
+        )
+        .await
+    }
+
+    async fn start_full(
+        configure: impl FnOnce(&mut LlmProxyConfig),
+        assertions: Option<Arc<dyn AssertionSource>>,
+        env_ids: Option<FederationIds>,
+        live_vendors: Vec<Vendor>,
+    ) -> Harness {
+        let vendor = Arc::new(MockVendor::default());
+        let vendor_url = serve(vendor.router()).await;
         // One mock host serves both the Messages API and the token endpoint,
         // as api.anthropic.com does.
         let anthropic = Arc::new(MockAnthropic::default());
@@ -185,17 +211,35 @@ impl Harness {
                 output_micro_usd_per_token: 15,
                 ..Default::default()
             }],
+            openai_identity_provider_id: "idp_test".to_string(),
+            openai_service_account_id: "svc_acct_test".to_string(),
+            openai_subject_audience: "https://openai.test/llmproxy".to_string(),
+            openai_base_url: vendor_url.clone(),
+            openai_token_url: format!("{vendor_url}/oauth/token"),
+            vertex_project_id: "proj-test".to_string(),
+            vertex_location: "us-central1".to_string(),
+            vertex_base_url: vendor_url.clone(),
             ..Default::default()
         };
+        // Without an assertion source there is no OpenAI federation.
+        if assertions.is_none() {
+            cfg.openai_identity_provider_id.clear();
+            cfg.openai_service_account_id.clear();
+            cfg.openai_subject_audience.clear();
+        }
         configure(&mut cfg);
         config_defaults(&mut cfg);
 
-        let svc = Arc::new(LlmProxyService::new(
-            TRUST_DOMAIN.to_string(),
-            assertions,
-            env_ids,
-            concat!(env!("CARGO_MANIFEST_DIR"), "/scripts").into(),
-        ));
+        let svc = Arc::new(
+            LlmProxyService::new(
+                TRUST_DOMAIN.to_string(),
+                assertions,
+                env_ids,
+                concat!(env!("CARGO_MANIFEST_DIR"), "/scripts").into(),
+            )
+            .with_metadata_base(vendor_url)
+            .with_live_vendors(live_vendors),
+        );
         svc.set_config(&cfg).unwrap();
 
         let accounting: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
@@ -221,7 +265,7 @@ impl Harness {
                 .unwrap()
         });
 
-        Harness { svc, wrapper, anthropic, tokens, cfg, grpc_url }
+        Harness { svc, wrapper, anthropic, tokens, vendor, cfg, grpc_url }
     }
 
     async fn list_models(&self, who: Who) -> Result<Vec<ModelAlias>, tonic::Status> {
@@ -882,3 +926,275 @@ async fn the_texas811_review_script_answers_a_completion_with_repair_step() {
 // The caller list used to be a literal here (beagle's pigeon path pinned to
 // pigeon_service_path_for); it is now auth_services_from_fleet, filled by the
 // fleet build from the fleet's declared clients. See tacplus-dev/llmproxy#3.
+
+// ---------------------------------------------------------------------------
+// #13: OpenAI and Google beside Anthropic, `latest` aliases, the resolved
+// model on every response
+// ---------------------------------------------------------------------------
+
+fn latest(alias: &str, vendor: Vendor, pattern: &str) -> ModelRoute {
+    ModelRoute {
+        alias: alias.to_string(),
+        vendor: vendor as i32,
+        latest_pattern: pattern.to_string(),
+        ..Default::default()
+    }
+}
+
+fn openai_latest() -> ModelRoute {
+    latest("openai-latest", Vendor::Openai, r"gpt-(\d+)(?:\.(\d+))?")
+}
+
+fn gemini_latest() -> ModelRoute {
+    latest("gemini-latest", Vendor::Google, r"gemini-(\d+)(?:\.(\d+))?-pro(?:-preview)?")
+}
+
+fn ask(alias: &str) -> GenerateCompletionRequest {
+    GenerateCompletionRequest {
+        model_alias: alias.to_string(),
+        system: "be brief".to_string(),
+        messages: vec![user_text("2+2")],
+        ..Default::default()
+    }
+}
+
+impl Harness {
+    async fn complete(&self, req: GenerateCompletionRequest) -> Result<GenerateCompletionResponse, tonic::Status> {
+        self.wrapper
+            .generate_completion_as_service(AGENT.signed(req))
+            .await
+            .map(|r| r.into_inner())
+    }
+}
+
+fn text_of(resp: &GenerateCompletionResponse) -> &str {
+    match &resp.result {
+        Some(llmproxy_model::types::services::llmproxy::llmproxy::generate_completion_response::Result::Text(t)) => t,
+        other => panic!("expected text, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_openai_latest_alias_answers_from_the_newest_flagship_through_federation() {
+    let h = Harness::start_vendors(vec![openai_latest()]).await;
+    *h.vendor.openai_models.lock().unwrap() = vec!["gpt-5", "gpt-5.1", "gpt-5.1-mini", "gpt-5-2025-08-07", "gpt-5.2-preview"];
+
+    let resp = h.complete(ask("openai-latest")).await.expect("completion succeeds");
+    assert_eq!(resp.provider_model, "gpt-5.1");
+    assert_eq!(resp.vendor, Vendor::Openai as i32);
+    assert_eq!(text_of(&resp), "gpt-5.1 says hi");
+    assert_eq!(resp.usage.unwrap().output_tokens, 5);
+
+    // The RFC 8693 exchange of a kernel JWT for this service, aud as configured.
+    let exchanges = h.vendor.to("/oauth/token");
+    assert_eq!(exchanges.len(), 1);
+    let body = &exchanges[0].body;
+    assert_eq!(body["grant_type"], "urn:ietf:params:oauth:grant-type:token-exchange");
+    assert_eq!(body["subject_token_type"], "urn:ietf:params:oauth:token-type:jwt");
+    assert_eq!(body["identity_provider_id"], "idp_test");
+    assert_eq!(body["service_account_id"], "svc_acct_test");
+    let subject = token::token::Token::parse(body["subject_token"].as_str().unwrap()).unwrap();
+    assert_eq!(subject.audience(), Some("https://openai.test/llmproxy"));
+
+    // The listing and the completion both carry the exchanged token, never a key.
+    for seen in h.vendor.to("/v1/") {
+        assert_eq!(seen.headers["authorization"], "Bearer oai-tok", "{}", seen.path);
+    }
+    let call = &h.vendor.to("/v1/chat/completions")[0].body;
+    assert_eq!(call["model"], "gpt-5.1");
+    assert_eq!(call["messages"][0], serde_json::json!({"role": "system", "content": "be brief"}));
+    assert!(h.anthropic.bodies().is_empty());
+}
+
+#[tokio::test]
+async fn a_gemini_latest_alias_answers_through_vertex_ai_with_the_metadata_token() {
+    let h = Harness::start_vendors(vec![gemini_latest()]).await;
+    *h.vendor.google_models.lock().unwrap() = vec![
+        ("gemini-2.5-pro", "GA"),
+        ("gemini-2.5-flash", "GA"),
+        ("gemini-3-pro-preview", "PUBLIC_PREVIEW"),
+        // GA by its stage, a preview by its id: not generally available.
+        ("gemini-3-pro-exp", "GA"),
+    ];
+
+    let resp = h.complete(ask("gemini-latest")).await.expect("completion succeeds");
+    assert_eq!(resp.provider_model, "gemini-2.5-pro");
+    assert_eq!(resp.vendor, Vendor::Google as i32);
+    assert_eq!(text_of(&resp), "gemini-2.5-pro says hi");
+
+    let tokens = h.vendor.to("/computeMetadata/");
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].headers["metadata-flavor"], "Google");
+    assert_eq!(tokens[0].method, axum::http::Method::GET);
+    let calls = h.vendor.to(":generateContent");
+    assert_eq!(
+        calls[0].path,
+        "/v1/projects/proj-test/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent"
+    );
+    assert_eq!(calls[0].headers["authorization"], "Bearer goog-tok");
+    assert_eq!(calls[0].body["systemInstruction"]["parts"][0]["text"], "be brief");
+}
+
+#[tokio::test]
+async fn allow_preview_lets_latest_resolve_to_a_preview() {
+    let h = Harness::start_vendors(vec![ModelRoute { allow_preview: true, ..gemini_latest() }]).await;
+    *h.vendor.google_models.lock().unwrap() = vec![("gemini-2.5-pro", "GA"), ("gemini-3-pro-preview", "PUBLIC_PREVIEW")];
+    let resp = h.complete(ask("gemini-latest")).await.expect("completion succeeds");
+    assert_eq!(resp.provider_model, "gemini-3-pro-preview");
+}
+
+#[tokio::test]
+async fn an_anthropic_latest_alias_resolves_from_anthropics_listing() {
+    let h = Harness::start_vendors(vec![latest("opus-latest", Vendor::Unspecified, r"claude-opus-(\d+)(?:-(\d))?-\d{8}")]).await;
+    *h.anthropic.models.lock().unwrap() = vec!["claude-opus-4-20250514", "claude-opus-4-1-20250805", "claude-sonnet-4-5-20250929"];
+
+    let resp = h.complete(ask("opus-latest")).await.expect("completion succeeds");
+    assert_eq!(resp.provider_model, "claude-opus-4-1-20250805");
+    assert_eq!(resp.vendor, Vendor::Anthropic as i32);
+    assert_eq!(h.anthropic.bodies()[0]["model"], "claude-opus-4-1-20250805");
+}
+
+#[tokio::test]
+async fn a_pinned_alias_says_which_model_answered() {
+    let h = Harness::start().await;
+    let resp = h.complete(ask("claude-sonnet")).await.expect("completion succeeds");
+    assert_eq!(resp.provider_model, "claude-sonnet-4-5");
+    assert_eq!(resp.vendor, Vendor::Anthropic as i32);
+    assert_eq!(h.anthropic.listings.load(Ordering::SeqCst), 0, "a pinned model needs no listing");
+}
+
+#[tokio::test]
+async fn a_listing_is_fetched_once_per_ttl_and_list_models_shows_latest_moving() {
+    let h = Harness::start_vendors(vec![openai_latest(), gemini_latest()]).await;
+    *h.vendor.openai_models.lock().unwrap() = vec!["gpt-5"];
+    *h.vendor.google_models.lock().unwrap() = vec![("gemini-2.5-pro", "GA")];
+
+    let models = h.list_models(AGENT).await.expect("list_models succeeds");
+    let resolved: Vec<(&str, &str, i32)> =
+        models.iter().map(|m| (m.name.as_str(), m.provider_model.as_str(), m.vendor)).collect();
+    assert_eq!(
+        resolved,
+        vec![
+            ("claude-sonnet", "claude-sonnet-4-5", Vendor::Anthropic as i32),
+            ("gemini-latest", "gemini-2.5-pro", Vendor::Google as i32),
+            ("openai-latest", "gpt-5", Vendor::Openai as i32),
+        ]
+    );
+    h.complete(ask("openai-latest")).await.expect("completion succeeds");
+    assert_eq!(h.vendor.to("/v1/models").len(), 1, "the listing is reused within the ttl");
+
+    // OpenAI ships a newer flagship; once the listing expires, the alias moves.
+    *h.vendor.openai_models.lock().unwrap() = vec!["gpt-5", "gpt-5.1"];
+    let mut cfg = h.cfg.clone();
+    cfg.latest_cache_ttl_ms = 0;
+    h.svc.set_config(&cfg).unwrap();
+    let models = h.list_models(AGENT).await.expect("list_models succeeds");
+    let openai = models.iter().find(|m| m.name == "openai-latest").unwrap();
+    assert_eq!(openai.provider_model, "gpt-5.1");
+    assert_eq!(h.complete(ask("openai-latest")).await.unwrap().provider_model, "gpt-5.1");
+}
+
+#[tokio::test]
+async fn a_vendor_whose_data_terms_are_not_recorded_gets_no_traffic() {
+    // LIVE_VENDORS as shipped: Anthropic only, until the README records the others' terms.
+    let h = Harness::start_with(
+        |c| c.models.extend([openai_latest(), gemini_latest()]),
+        Some(Arc::new(MockAssertions::default())),
+    )
+    .await;
+    *h.vendor.openai_models.lock().unwrap() = vec!["gpt-5"];
+
+    for alias in ["openai-latest", "gemini-latest"] {
+        let err = h.complete(ask(alias)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{alias}");
+        assert!(err.message().contains("data terms"), "{}", err.message());
+    }
+    let models = h.list_models(AGENT).await.expect("list_models succeeds");
+    let openai = models.iter().find(|m| m.name == "openai-latest").unwrap();
+    assert_eq!((openai.provider_model.as_str(), openai.vendor), ("", Vendor::Openai as i32));
+    assert!(h.vendor.seen().is_empty(), "nothing at all was sent to OpenAI or Google");
+}
+
+#[tokio::test]
+async fn a_vendor_without_its_config_is_failed_precondition() {
+    let h = Harness::start_vendors(vec![openai_latest(), gemini_latest()]).await;
+    let mut cfg = h.cfg.clone();
+    cfg.openai_identity_provider_id.clear();
+    cfg.openai_service_account_id.clear();
+    cfg.openai_subject_audience.clear();
+    cfg.vertex_project_id.clear();
+    h.svc.set_config(&cfg).unwrap();
+    for alias in ["openai-latest", "gemini-latest"] {
+        let err = h.complete(ask(alias)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{alias}");
+        assert!(err.message().contains("not configured"), "{}", err.message());
+    }
+    assert!(h.vendor.seen().is_empty());
+}
+
+#[tokio::test]
+async fn a_latest_pattern_matching_nothing_is_failed_precondition() {
+    let h = Harness::start_vendors(vec![openai_latest()]).await;
+    *h.vendor.openai_models.lock().unwrap() = vec!["o3", "gpt-4o-mini"];
+    let err = h.complete(ask("openai-latest")).await.unwrap_err();
+    assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    assert!(err.message().contains("no OpenAI model matches"), "{}", err.message());
+    assert!(h.vendor.to("/v1/chat/completions").is_empty());
+}
+
+#[tokio::test]
+async fn tools_on_a_text_only_vendor_are_invalid_argument() {
+    let h = Harness::start_vendors(vec![openai_latest()]).await;
+    *h.vendor.openai_models.lock().unwrap() = vec!["gpt-5"];
+    let req = GenerateCompletionRequest {
+        tools: vec![ToolSpec { name: "post_room".to_string(), input_schema_json: "{}".to_string(), ..Default::default() }],
+        ..ask("openai-latest")
+    };
+    let err = h.complete(req).await.unwrap_err();
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    assert!(h.vendor.to("/v1/chat/completions").is_empty());
+}
+
+#[tokio::test]
+async fn a_session_turn_says_its_model_and_runs_on_anthropic_routes_only() {
+    let h = Harness::start_vendors(vec![openai_latest()]).await;
+    *h.vendor.openai_models.lock().unwrap() = vec!["gpt-5"];
+
+    let resp = h.turn(FRANK_A, turn_request("t-model", false)).await.expect("turn succeeds");
+    assert_eq!(resp.provider_model, "claude-sonnet-4-5");
+    assert_eq!(resp.vendor, Vendor::Anthropic as i32);
+
+    let err = h
+        .turn(FRANK_A, SessionTurnRequest { model_alias: "openai-latest".to_string(), ..turn_request("t-openai", false) })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    assert!(err.message().contains("Anthropic routes only"), "{}", err.message());
+    assert!(h.vendor.to("/v1/chat/completions").is_empty());
+}
+
+#[tokio::test]
+async fn a_route_naming_its_model_both_ways_is_a_config_error() {
+    let h = Harness::start().await;
+    let mut cfg = h.cfg.clone();
+    cfg.models[0].latest_pattern = "claude-.*".to_string();
+    let err = h.svc.set_config(&cfg).unwrap_err();
+    assert!(err.contains("exactly one"), "{err}");
+}
+
+#[tokio::test]
+async fn a_scripted_completion_says_it_was_the_stand_in() {
+    let h = Harness::start_with(scripted_for_tenant_a, None).await;
+    let resp = h
+        .wrapper
+        .generate_completion_as_service(FRANK_A.signed(GenerateCompletionRequest {
+            model_alias: "claude-sonnet".to_string(),
+            messages: vec![user_text("[[script:echo]] hello")],
+            ..Default::default()
+        }))
+        .await
+        .expect("scripted completion")
+        .into_inner();
+    assert_eq!(resp.provider_model, "harness-scripted");
+    assert_eq!(resp.vendor, Vendor::Unspecified as i32);
+}

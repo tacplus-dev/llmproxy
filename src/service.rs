@@ -4,7 +4,8 @@
 //! service-token auth (`option (spec.service_s2s)` on the whole `LlmProxy`
 //! service in llmproxy.proto), no delegated/user-token path, no lawful
 //! intercept. Phase 2 adds the A29 session path (session.rs, callbacks.rs,
-//! budget.rs) and the D22 federation credential (federation.rs).
+//! budget.rs) and the D22 federation credential (federation.rs). #13 adds
+//! OpenAI and Google beside Anthropic (providers.rs).
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
@@ -18,42 +19,51 @@ use llmproxy_model::s2sm::internal::grpc::servers::services::llmproxy::llm_proxy
 use llmproxy_model::types::services::llmproxy::llmproxy::{
     BucketBalance, Config as LlmProxyConfig, GenerateCompletionRequest,
     GenerateCompletionResponse, GetBudgetRequest, GetBudgetResponse, ListModelsRequest,
-    ListModelsResponse, Message as ProtoMessage, SessionTurnRequest, SessionTurnResponse,
+    ListModelsResponse, Message as ProtoMessage, SessionTurnRequest, SessionTurnResponse, Vendor,
 };
 use llmproxy_model::types::services::llmproxy::llmproxy::BudgetBucket;
 use llmproxy_model::types::sys::healthreport::healthreport::InstanceStatus;
 
-use crate::anthropic::{
-    AnthropicClient, AnthropicError, Credential, ModelTable, ANTHROPIC_API_BASE,
-};
+use crate::anthropic::{AnthropicClient, Credential, ANTHROPIC_API_BASE};
 use crate::budget::Ledger;
 use crate::callbacks::{CallbackRegistry, InboundStream, OutboundStream};
 use crate::federation::{AssertionSource, Federation, FederationIds};
+use crate::openai::{OpenAiClient, OpenAiExchange, OpenAiIds, OPENAI_TOKEN_URL};
+use crate::providers::{vendor_name, ProviderError, Providers, LIVE_VENDORS};
+use crate::routes::{ListingCache, ModelTable};
 use crate::scripted::Script;
+use crate::vertex::{MetadataToken, VertexClient, METADATA_BASE};
 
-pub(crate) fn to_status(e: AnthropicError) -> Status {
+/// The provider_model a scripted stand-in reply carries.
+pub(crate) const SCRIPTED_MODEL: &str = "harness-scripted";
+
+pub(crate) fn to_status(e: ProviderError) -> Status {
     match e {
-        AnthropicError::UnknownModelAlias(a) => {
+        ProviderError::UnknownModelAlias(a) => {
             Status::invalid_argument(format!("unknown model_alias: {a}"))
         }
         // The caller's own request shape (a bad tool schema, etc) rather than an
         // upstream failure.
-        AnthropicError::UnexpectedResponseShape(s) if s.contains("input_schema_json") => {
+        ProviderError::UnexpectedResponseShape(_, s) if s.contains("input_schema_json") => {
             Status::invalid_argument(s)
         }
-        AnthropicError::Request(e) => Status::unavailable(format!("Anthropic unreachable: {e}")),
-        AnthropicError::Api { status, body } => {
+        ProviderError::Unsupported(s) => Status::invalid_argument(s),
+        ProviderError::Request(v, e) => Status::unavailable(format!("{} unreachable: {e}", vendor_name(v))),
+        ProviderError::Api { vendor, status, body } => {
             // Never echo the REQUEST back (it could carry a caller's tool
-            // arguments); the status and Anthropic's own error body are enough
+            // arguments); the status and the vendor's own error body are enough
             // for a caller to act on, and neither ever contains the credential —
             // that's sent as a header this service alone attaches, never part of
             // any response we relay.
-            Status::internal(format!("Anthropic API error {status}: {body}"))
+            Status::internal(format!("{} API error {status}: {body}", vendor_name(vendor)))
         }
-        AnthropicError::UnexpectedResponseShape(s) => {
-            Status::internal(format!("unexpected Anthropic response: {s}"))
+        ProviderError::UnexpectedResponseShape(v, s) => {
+            Status::internal(format!("unexpected {} response: {s}", vendor_name(v)))
         }
-        AnthropicError::Credential(s) => Status::unavailable(s),
+        ProviderError::Credential(s) => Status::unavailable(s),
+        e @ (ProviderError::NotLive(_) | ProviderError::NotConfigured(_) | ProviderError::NoLatestMatch(_)) => {
+            Status::failed_precondition(e.to_string())
+        }
     }
 }
 
@@ -65,8 +75,12 @@ pub struct LlmProxyService {
     // rebuildable after construction; the Arc makes swapping it cheap and lets
     // an in-flight call finish against the client it started with rather than
     // racing a concurrent config push.
-    anthropic: RwLock<Arc<AnthropicClient>>,
+    providers: RwLock<Arc<Providers>>,
     config: RwLock<Arc<LlmProxyConfig>>,
+    /// The vendors that may take traffic: LIVE_VENDORS, widened only by tests.
+    live_vendors: Vec<Vendor>,
+    /// Where Vertex AI's token comes from (vertex.rs).
+    metadata_base: String,
     /// The fleet trust domain, for forming caller SPIFFE IDs.
     trust_domain: String,
     /// The D22 JWT source (federation.rs module doc).
@@ -90,12 +104,10 @@ impl LlmProxyService {
         scripts_dir: PathBuf,
     ) -> Self {
         Self {
-            anthropic: RwLock::new(Arc::new(AnthropicClient::new(
-                Credential::ApiKey(String::new()),
-                None,
-                ModelTable::default(),
-            ))),
+            providers: RwLock::new(Arc::new(Providers::empty())),
             config: RwLock::new(Arc::new(LlmProxyConfig::default())),
+            live_vendors: LIVE_VENDORS.to_vec(),
+            metadata_base: METADATA_BASE.to_string(),
             trust_domain,
             assertions,
             env_ids,
@@ -104,6 +116,15 @@ impl LlmProxyService {
             ledger: Mutex::new(Ledger::default()),
             next_frame: AtomicU64::new(0),
         }
+    }
+
+    pub fn with_metadata_base(self, metadata_base: String) -> Self {
+        Self { metadata_base, ..self }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_live_vendors(self, live_vendors: Vec<Vendor>) -> Self {
+        Self { live_vendors, ..self }
     }
 
     pub fn set_config(&self, cfg: &LlmProxyConfig) -> Result<(), String> {
@@ -130,8 +151,44 @@ impl LlmProxyService {
             }
             None => Credential::ApiKey(cfg.llm_credential.clone()),
         };
-        *self.anthropic.write().unwrap() =
-            Arc::new(AnthropicClient::new(credential, base_url, ModelTable::new(&cfg.models)));
+        // OpenAI: its own exchange of the same kind of kernel JWT (openai.rs).
+        let openai = match OpenAiIds::from_config(cfg)? {
+            Some(ids) => {
+                let assertions = self.assertions.clone().ok_or(
+                    "openai_* ids are set but this build has no kernel assertion source",
+                )?;
+                let token_url = Some(cfg.openai_token_url.clone())
+                    .filter(|u| !u.is_empty())
+                    .unwrap_or_else(|| OPENAI_TOKEN_URL.to_string());
+                let federation = Federation::with_exchange(
+                    "OpenAI",
+                    Box::new(OpenAiExchange { token_url, ids, assertions }),
+                );
+                Some(OpenAiClient::new(Some(cfg.openai_base_url.clone()), Arc::new(federation)))
+            }
+            None => None,
+        };
+        // Google: the pod's own Workload Identity token (vertex.rs).
+        let vertex = (!cfg.vertex_project_id.is_empty()).then(|| {
+            let federation = Federation::with_exchange(
+                "Google",
+                Box::new(MetadataToken { base_url: self.metadata_base.clone() }),
+            );
+            VertexClient::new(
+                Some(cfg.vertex_base_url.clone()),
+                cfg.vertex_project_id.clone(),
+                cfg.vertex_location.clone(),
+                Arc::new(federation),
+            )
+        });
+        *self.providers.write().unwrap() = Arc::new(Providers {
+            models: ModelTable::new(&cfg.models)?,
+            anthropic: AnthropicClient::new(credential, base_url),
+            openai,
+            vertex,
+            live: self.live_vendors.clone(),
+            listings: ListingCache::new(std::time::Duration::from_millis(cfg.latest_cache_ttl_ms.max(0) as u64)),
+        });
         *self.config.write().unwrap() = Arc::new(cfg.clone());
         self.callbacks.close_matching(&cfg.blocked_callers);
         Ok(())
@@ -141,11 +198,11 @@ impl LlmProxyService {
         self.config.read().unwrap().clone()
     }
 
-    pub(crate) fn anthropic(&self) -> Arc<AnthropicClient> {
+    pub(crate) fn providers(&self) -> Arc<Providers> {
         // Clone the Arc out from under the lock (rather than holding the read
         // guard across an .await) so a config push mid-flight never blocks
         // on, or is blocked by, an in-flight call.
-        self.anthropic.read().unwrap().clone()
+        self.providers.read().unwrap().clone()
     }
 
     /// The caller's SPIFFE ID, tenant-qualified (`spiffe://<td>/tenants/a/
@@ -211,12 +268,12 @@ impl LlmProxyHandler for LlmProxyService {
     ) -> Result<GenerateCompletionResponse, Status> {
         let caller = self.caller_id(caller)?;
         if let Some(script) = self.script_for(&caller, &req.messages)? {
-            return script.completion(&req.messages);
+            return script.completion(&req.messages).map(|resp| GenerateCompletionResponse {
+                provider_model: SCRIPTED_MODEL.to_string(),
+                ..resp
+            });
         }
-        self.anthropic()
-            .generate_completion(&req)
-            .await
-            .map_err(to_status)
+        self.providers().complete(&req).await.map_err(to_status)
     }
 
     async fn generate_session_turn(
@@ -273,7 +330,7 @@ impl LlmProxyHandler for LlmProxyService {
     ) -> Result<ListModelsResponse, Status> {
         self.caller_id(caller)?;
         Ok(ListModelsResponse {
-            model_aliases: self.anthropic().models().aliases(),
+            model_aliases: self.providers().list_aliases().await,
             ..Default::default()
         })
     }

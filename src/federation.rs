@@ -14,6 +14,12 @@
 //! kernel-signed token on every call, never cached. Until kernel declares
 //! `MintExternalServiceToken` the generated accessor returns an error, so an
 //! exchange fails rather than falling back to the static key.
+//!
+//! The cache and its refresh tiers are the same for every vendor (#13): what
+//! differs is the one exchange, an [`Exchange`]. Anthropic's is
+//! [`AnthropicExchange`]; OpenAI's (openai.rs) presents the same kind of kernel
+//! JWT in an RFC 8693 token exchange, and Google's (vertex.rs) asks the GKE
+//! metadata server.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -35,11 +41,11 @@ const ADVISORY_REFRESH: Duration = Duration::from_secs(5 * 60);
 /// default).
 const MANDATORY_REFRESH: Duration = Duration::from_secs(60);
 
-/// A fresh kernel-signed JWT for the exchange, `aud = ASSERTION_AUDIENCE`, a new
-/// `jti` on every call (WIF rejects a reused jti).
+/// A fresh kernel-signed JWT for an exchange, `aud = audience` (Anthropic's
+/// is ASSERTION_AUDIENCE), a new `jti` on every call (WIF rejects a reused jti).
 #[tonic::async_trait]
 pub trait AssertionSource: Send + Sync {
-    async fn assertion(&self) -> Result<String, String>;
+    async fn assertion(&self, audience: &str) -> Result<String, String>;
 }
 
 /// The generated token path (BQ14).
@@ -47,8 +53,8 @@ pub struct KernelAssertions(pub Arc<ServiceManager>);
 
 #[tonic::async_trait]
 impl AssertionSource for KernelAssertions {
-    async fn assertion(&self) -> Result<String, String> {
-        self.0.token_for_external(ASSERTION_AUDIENCE).await.map_err(|e| e.to_string())
+    async fn assertion(&self, audience: &str) -> Result<String, String> {
+        self.0.token_for_external(audience).await.map_err(|e| e.to_string())
     }
 }
 
@@ -105,11 +111,105 @@ struct CachedToken {
     expires_at: Instant,
 }
 
-pub struct Federation {
-    http: reqwest::Client,
+/// A token one exchange issued, and how long it lives.
+pub struct Issued {
+    pub token: String,
+    pub expires_in: Duration,
+}
+
+/// One vendor's exchange: obtain a new provider token. [`Federation`] decides
+/// when to call it.
+#[tonic::async_trait]
+pub trait Exchange: Send + Sync {
+    async fn exchange(&self, http: &reqwest::Client) -> Result<Issued, String>;
+}
+
+/// POSTs a JSON token request and reads `access_token` + `expires_in` back:
+/// the reply shape Anthropic's and OpenAI's token endpoints share.
+pub async fn post_token_request(
+    http: &reqwest::Client,
+    url: &str,
+    body: &impl Serialize,
+) -> Result<Issued, String> {
+    let resp = http
+        .post(url)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("token endpoint unreachable: {e}"))?;
+    read_issued(resp).await
+}
+
+/// A token endpoint's reply: an error for a non-2xx, else the token.
+pub async fn read_issued(resp: reqwest::Response) -> Result<Issued, String> {
+    #[derive(Deserialize)]
+    struct Response {
+        access_token: String,
+        expires_in: u64,
+    }
+
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("reading token endpoint reply: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("token endpoint returned {status}: {text}"));
+    }
+    let parsed: Response = serde_json::from_str(&text)
+        .map_err(|e| format!("unexpected token endpoint reply: {e}"))?;
+    Ok(Issued {
+        token: parsed.access_token,
+        expires_in: Duration::from_secs(parsed.expires_in),
+    })
+}
+
+/// Anthropic's jwt-bearer exchange with the four federation ids.
+pub struct AnthropicExchange {
     token_url: String,
     ids: FederationIds,
     assertions: Arc<dyn AssertionSource>,
+}
+
+#[tonic::async_trait]
+impl Exchange for AnthropicExchange {
+    async fn exchange(&self, http: &reqwest::Client) -> Result<Issued, String> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            grant_type: &'a str,
+            assertion: &'a str,
+            federation_rule_id: &'a str,
+            organization_id: &'a str,
+            service_account_id: &'a str,
+            workspace_id: &'a str,
+        }
+
+        let assertion = self
+            .assertions
+            .assertion(ASSERTION_AUDIENCE)
+            .await
+            .map_err(|e| format!("no kernel assertion: {e}"))?;
+        post_token_request(
+            http,
+            &self.token_url,
+            &Request {
+                grant_type: JWT_BEARER_GRANT,
+                assertion: &assertion,
+                federation_rule_id: &self.ids.federation_rule_id,
+                organization_id: &self.ids.organization_id,
+                service_account_id: &self.ids.service_account_id,
+                workspace_id: &self.ids.workspace_id,
+            },
+        )
+        .await
+    }
+}
+
+pub struct Federation {
+    http: reqwest::Client,
+    /// Whose token this is, for errors and logs ("Anthropic").
+    vendor: &'static str,
+    exchanger: Box<dyn Exchange>,
     cached: Mutex<Option<CachedToken>>,
     /// Held for the whole of one exchange: the single flight.
     exchange: tokio::sync::Mutex<()>,
@@ -117,12 +217,16 @@ pub struct Federation {
 }
 
 impl Federation {
+    /// Anthropic's federation (D22).
     pub fn new(token_url: String, ids: FederationIds, assertions: Arc<dyn AssertionSource>) -> Self {
+        Self::with_exchange("Anthropic", Box::new(AnthropicExchange { token_url, ids, assertions }))
+    }
+
+    pub fn with_exchange(vendor: &'static str, exchanger: Box<dyn Exchange>) -> Self {
         Self {
             http: reqwest::Client::new(),
-            token_url,
-            ids,
-            assertions,
+            vendor,
+            exchanger,
             cached: Mutex::new(None),
             exchange: tokio::sync::Mutex::new(()),
             background_refresh: AtomicBool::new(false),
@@ -157,11 +261,12 @@ impl Federation {
             Ok(token) => Ok(token),
             Err(e) => match self.cached() {
                 Some(cached) if cached.expires_at > Instant::now() => {
-                    tracing::warn!(error = %e, "Anthropic token exchange failed; serving the cached token until it expires");
+                    tracing::warn!(vendor = self.vendor, error = %e, "token exchange failed; serving the cached token until it expires");
                     Ok(cached.token)
                 }
                 _ => Err(format!(
-                    "Anthropic token exchange failed and no unexpired token is cached: {e}"
+                    "{} token exchange failed and no unexpired token is cached: {e}",
+                    self.vendor
                 )),
             },
         }
@@ -184,7 +289,7 @@ impl Federation {
                 });
                 if still_due {
                     if let Err(e) = this.exchange_once().await {
-                        tracing::warn!(error = %e, "advisory Anthropic token refresh failed; the cached token is still served");
+                        tracing::warn!(vendor = this.vendor, error = %e, "advisory token refresh failed; the cached token is still served");
                     }
                 }
             }
@@ -192,58 +297,14 @@ impl Federation {
         });
     }
 
-    /// One exchange with a freshly obtained assertion. Caller holds `exchange`.
+    /// One exchange. Caller holds `exchange`.
     async fn exchange_once(&self) -> Result<String, String> {
-        #[derive(Serialize)]
-        struct Request<'a> {
-            grant_type: &'a str,
-            assertion: &'a str,
-            federation_rule_id: &'a str,
-            organization_id: &'a str,
-            service_account_id: &'a str,
-            workspace_id: &'a str,
-        }
-        #[derive(Deserialize)]
-        struct Response {
-            access_token: String,
-            expires_in: u64,
-        }
-
-        let assertion = self
-            .assertions
-            .assertion()
-            .await
-            .map_err(|e| format!("no kernel assertion: {e}"))?;
-        let resp = self
-            .http
-            .post(&self.token_url)
-            .json(&Request {
-                grant_type: JWT_BEARER_GRANT,
-                assertion: &assertion,
-                federation_rule_id: &self.ids.federation_rule_id,
-                organization_id: &self.ids.organization_id,
-                service_account_id: &self.ids.service_account_id,
-                workspace_id: &self.ids.workspace_id,
-            })
-            .send()
-            .await
-            .map_err(|e| format!("token endpoint unreachable: {e}"))?;
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| format!("reading token endpoint reply: {e}"))?;
-        if !status.is_success() {
-            return Err(format!("token endpoint returned {status}: {text}"));
-        }
-        let parsed: Response = serde_json::from_str(&text)
-            .map_err(|e| format!("unexpected token endpoint reply: {e}"))?;
-
+        let issued = self.exchanger.exchange(&self.http).await?;
         *self.cached.lock().unwrap() = Some(CachedToken {
-            token: parsed.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(parsed.expires_in),
+            token: issued.token.clone(),
+            expires_at: Instant::now() + issued.expires_in,
         });
-        Ok(parsed.access_token)
+        Ok(issued.token)
     }
 }
 
