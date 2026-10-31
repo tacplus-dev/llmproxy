@@ -7,7 +7,7 @@ The fleet's one model-egress service: holds the federated identity to the model 
 Rust. Current line v0.1.0; tacplus floor 2.4.
 
 ## Next
-- Nothing approved and unblocked; every open approved issue is in Later.
+- Route to OpenAI, xAI and Gemini with per-vendor `latest` resolution and the resolved model id on the response, for doppelganger panel mode (#13; vendor credentials need Jody's decision) (Jody, 2026-10-31)
 
 ## Later
 - rsa 0.9.10 advisory via the generated chassis (#9), blocked on tacplus-dev/tacplus#186
