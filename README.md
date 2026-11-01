@@ -15,21 +15,36 @@ and a vendor's data terms mean what they say.
 | Vendor | API | Credential | Live |
 |---|---|---|---|
 | Anthropic | Messages API | jwt-bearer exchange of a kernel JWT (`Config.anthropic_federation_rule_id` and friends, or the pod's `ANTHROPIC_*` ids) | yes |
-| OpenAI | Chat Completions | RFC 8693 token exchange of a kernel JWT at `auth.openai.com` for a short-lived token of a dedicated OpenAI project service account with a spending cap (`Config.openai_identity_provider_id`, `openai_service_account_id`, `openai_subject_audience`) | no: data terms not recorded |
-| Google (Gemini) | Vertex AI `generateContent` | GKE Workload Identity: the pod's Google service account token from the metadata server (`Config.vertex_project_id`, `vertex_location`) | no: data terms not recorded |
+| OpenAI | Chat Completions | RFC 8693 token exchange of a kernel JWT at `auth.openai.com` for a short-lived token of a dedicated OpenAI project service account with a spending cap (`Config.openai_identity_provider_id`, `openai_service_account_id`, `openai_subject_audience`) | no: terms recorded, waits on its identity provider (#14) |
+| Google (Gemini) | Vertex AI `generateContent` | GKE Workload Identity: the pod's Google service account token from the metadata server (`Config.vertex_project_id`, `vertex_location`) | no: terms recorded, waits on Vertex AI on the project (#14) |
 | xAI (Grok) | none | **waiting on keyless auth**: xAI documents no workload identity federation, and llmproxy holds no static key. If xAI adds federation (or another keyless method), it can be added then | no |
 
 **Data terms before live traffic.** A vendor takes live traffic only once Jody has recorded here, in writing, that its
-API does not train on inputs and keeps them for the shortest retention available. Until then the vendor is off in
-code, not only in config: `LIVE_VENDORS` in [src/providers.rs](src/providers.rs) lists the vendors whose terms are
-recorded, and a route to any other is refused (FAILED_PRECONDITION) before anything, model listings included, is
-sent to it. Turning a vendor on is one reviewed change: its terms in this table, and the vendor in `LIVE_VENDORS`.
+API does not train on inputs and how long it keeps them. Until then the vendor is off in code, not only in config:
+`LIVE_VENDORS` in [src/providers.rs](src/providers.rs) lists the vendors whose terms are recorded and whose deployment
+is set up, and a route to any other is refused (FAILED_PRECONDITION) before anything, model listings included, is sent
+to it. Turning a vendor on is one reviewed change: its terms in this table, and the vendor in `LIVE_VENDORS`.
 
 | Vendor | No training on API inputs | Retention | Recorded |
 |---|---|---|---|
 | Anthropic | not recorded here | not recorded here | live before this rule (#13) |
-| OpenAI | not yet recorded | not yet recorded | |
-| Google | not yet recorded | not yet recorded | |
+| OpenAI | yes, by default (we do not opt in) | abuse-monitoring logs per [OpenAI's policy](https://developers.openai.com/docs/guides/your-data); the panel's prompts (engineering principles and the design question only) stay in OpenAI's prompt cache for up to 24 hours, each model's default; zero data retention not applied for | Jody, 2026-10-31 (#13), cache 2026-11-01 (#14) |
+| Google | yes, not without permission | abuse-monitoring logs per [Google's policy](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance); durable caching and session resumption off on the GCP project (the hub applies it); zero data retention not applied for | Jody, 2026-10-31 (#13) |
+
+Zero data retention needs each vendor's approval and is not needed while the panel sees only principles and the design
+question; apply for it if that changes. llmproxy sends OpenAI no prompt-caching parameter: the latest models accept
+only the 24-hour cache, and a setting that asks for less fails on them (src/openai.rs).
+
+**Deploying OpenAI and Google.** Both vendors' terms are recorded; each joins `LIVE_VENDORS` once its setup exists (#14):
+
+- **OpenAI**: a Workload Identity Provider in Jody's OpenAI org that trusts the fleet kernel's JWT issuer (the `iss` of
+  the tokens `token_for_external` mints for llmproxy), whose OIDC discovery and JWKS OpenAI must be able to fetch
+  publicly; with audience the value of `Config.openai_subject_audience` (llmproxy asks the kernel for exactly that
+  `aud`), and a mapping from llmproxy's subject to the dedicated, spending-capped project service account
+  (`Config.openai_service_account_id`). The fleet's kernel (seatrials.tacplus.dev) is offline until
+  tacplus-dev/fleet-seatrials#4.
+- **Google**: Vertex AI enabled on the GCP project `Config.vertex_project_id` names (jody1-328023), with durable caching
+  and session resumption off, and llmproxy's pod bound to a Google service account by GKE Workload Identity.
 
 **Routes.** `Config.models` maps each alias callers use to a vendor and a model. A route pins `provider_model`, or
 names `latest_pattern`: the alias then resolves at call time to the vendor's newest model in its own model listing

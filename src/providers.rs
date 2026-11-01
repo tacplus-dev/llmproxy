@@ -4,7 +4,7 @@
 //! vendor and model, then calls that vendor.
 //!
 //! A vendor takes live traffic only once Jody has recorded its data terms in
-//! the README (no training on API inputs, the shortest retention available):
+//! the README (no training on API inputs, and how long it keeps them):
 //! [`LIVE_VENDORS`] is that record in code, so turning a vendor on is a
 //! reviewed change beside the README's, never a config push. A route to any
 //! other vendor is refused before anything is sent to it, model listings
@@ -22,7 +22,8 @@ use crate::openai::OpenAiClient;
 use crate::routes::{pick_latest, ListingCache, ModelTable};
 use crate::vertex::VertexClient;
 
-/// The vendors whose data terms the README records (README, Vendors).
+/// The vendors whose data terms the README records and whose deployment is set
+/// up (README, Vendors). OpenAI and Google wait on their setup (#14).
 pub const LIVE_VENDORS: &[Vendor] = &[Vendor::Anthropic];
 
 /// The vendor's name in errors and logs.

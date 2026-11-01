@@ -150,6 +150,11 @@ impl OpenAiClient {
     }
 }
 
+/// The body carries no prompt-caching parameter (`prompt_cache_retention`,
+/// `prompt_cache_options`): each model keeps its own default, up to 24 hours
+/// in OpenAI's prompt cache (Jody, 2026-11-01, #14; README, Vendors). A
+/// setting that asks for less fails on the latest models, which accept only
+/// the 24-hour cache.
 fn build_request_body(model: &str, req: &GenerateCompletionRequest) -> Result<serde_json::Value, ProviderError> {
     #[derive(Serialize)]
     struct Message {
@@ -262,6 +267,16 @@ mod tests {
                 "max_completion_tokens": 4096,
             })
         );
+    }
+
+    #[test]
+    fn no_model_is_sent_a_prompt_caching_parameter() {
+        let req = GenerateCompletionRequest { messages: vec![text(ProtoRole::User, "hi")], ..Default::default() };
+        for model in ["gpt-4.1", "gpt-5.4", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6", "gpt-7"] {
+            let body = build_request_body(model, &req).unwrap();
+            let keys: Vec<&String> = body.as_object().unwrap().keys().collect();
+            assert!(keys.iter().all(|k| !k.starts_with("prompt_cache")), "{model}: {keys:?}");
+        }
     }
 
     #[test]

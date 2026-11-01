@@ -43,13 +43,10 @@ the looper then marks it `promoted` or `declined` here with the date.
 - **Tools and session turns on OpenAI and Google** (2026-10-31, #13): those vendors are text in, text out today
   (the panel needs no more); tool use and `GenerateSessionTurn` run on Anthropic routes only. With the
   output-schema field (#2), each vendor's structured-output mode could carry the schema instead of the prompt.
-- **Go live on OpenAI and Google** (2026-10-31, #14): Jody accepted both vendors' default data terms on #13 with two
-  controls (no OpenAI extended prompt caching; Vertex durable caching and session resumption off on the project).
-  Record the terms and controls in the README's data-terms table with Jody's links, add `openai` and `google` to
-  `LIVE_VENDORS`, make the OpenAI adapter refuse to send `prompt_cache_retention` (other than the in-memory default)
-  with a test that pins it, keep the not-live refusal tested by narrowing the harness's vendors, and say in the
-  README which issuer and audience OpenAI's identity provider must trust. Small code change; the live acceptance
-  (one real panel call per vendor) waits on Vertex AI enablement on jody1-328023 and an OpenAI identity provider
-  that can reach a public kernel issuer (fleet-seatrials#4). Design and questions on #14.
+- **Go live on OpenAI and Google** (2026-10-31, #14): promoted to ROADMAP.md. The data terms are in the README
+  (2026-11-01); Jody dropped the "no extended prompt caching" control and accepted OpenAI's 24-hour cache, so the
+  adapter sends no caching parameter (a test pins it). Left: `openai` and `google` in `LIVE_VENDORS` and one real
+  panel call per vendor, once Vertex AI is on for jody1-328023 and OpenAI's identity provider trusts a public kernel
+  issuer (tacplus-dev/fleet-seatrials#4).
 
 ## Promoted / declined
