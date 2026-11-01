@@ -7,6 +7,7 @@ The fleet's one model-egress service: holds the federated identity to the model 
 Rust. Current line v0.1.0; tacplus floor 2.4.
 
 ## Next
+- Go live with OpenAI and Google (data terms accepted 2026-10-31); blocked on Vertex enablement and the OpenAI WIF provider (#14) (Jody, 2026-10-31)
 - Route to OpenAI, xAI and Gemini with per-vendor `latest` resolution and the resolved model id on the response, for doppelganger panel mode (#13; vendor credentials need Jody's decision) (Jody, 2026-10-31)
 
 ## Later
