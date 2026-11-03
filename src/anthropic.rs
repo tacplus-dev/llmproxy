@@ -256,6 +256,7 @@ impl AnthropicClient {
         &self,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AnthropicError> {
+        // trace: unrelated: leaves the fleet; vendor APIs carry no trace_id
         let request = self
             .http
             .post(format!("{}/v1/messages", self.base_url))
