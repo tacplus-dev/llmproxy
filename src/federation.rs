@@ -48,6 +48,7 @@ pub struct KernelAssertions(pub Arc<ServiceManager>);
 #[tonic::async_trait]
 impl AssertionSource for KernelAssertions {
     async fn assertion(&self) -> Result<String, String> {
+        // trace: unrelated: the token is cached and shared across requests
         self.0.token_for_external(ASSERTION_AUDIENCE).await.map_err(|e| e.to_string())
     }
 }
@@ -209,11 +210,13 @@ impl Federation {
             expires_in: u64,
         }
 
+        // trace: unrelated: the token is cached and shared across requests
         let assertion = self
             .assertions
             .assertion()
             .await
             .map_err(|e| format!("no kernel assertion: {e}"))?;
+        // trace: unrelated: the token is cached and shared across requests
         let resp = self
             .http
             .post(&self.token_url)
