@@ -74,6 +74,7 @@ impl Exchange for OpenAiExchange {
             service_account_id: &'a str,
         }
 
+        // trace: unrelated: the token is cached and shared across requests
         let subject = self
             .assertions
             .assertion(&self.ids.subject_audience)
@@ -126,6 +127,7 @@ impl OpenAiClient {
             data: Vec<Model>,
         }
 
+        // trace: unrelated: the listing is cached and shared across requests
         let body = self.send(self.http.get(format!("{}/v1/models", self.base_url))).await?;
         let listing: Listing = serde_json::from_value(body)
             .map_err(|e| ProviderError::UnexpectedResponseShape(Vendor::Openai, format!("model listing: {e}")))?;
@@ -143,6 +145,7 @@ impl OpenAiClient {
         req: &GenerateCompletionRequest,
     ) -> Result<GenerateCompletionResponse, ProviderError> {
         let body = build_request_body(model, req)?;
+        // trace: unrelated: leaves the fleet; vendor APIs carry no trace_id (README, Vendors)
         let reply = self
             .send(self.http.post(format!("{}/v1/chat/completions", self.base_url)).json(&body))
             .await?;

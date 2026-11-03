@@ -54,6 +54,7 @@ pub struct KernelAssertions(pub Arc<ServiceManager>);
 #[tonic::async_trait]
 impl AssertionSource for KernelAssertions {
     async fn assertion(&self, audience: &str) -> Result<String, String> {
+        // trace: unrelated: the token is cached and shared across requests
         self.0.token_for_external(audience).await.map_err(|e| e.to_string())
     }
 }
@@ -131,6 +132,7 @@ pub async fn post_token_request(
     url: &str,
     body: &impl Serialize,
 ) -> Result<Issued, String> {
+    // trace: unrelated: the token is cached and shared across requests
     let resp = http
         .post(url)
         .json(body)
@@ -184,6 +186,7 @@ impl Exchange for AnthropicExchange {
             workspace_id: &'a str,
         }
 
+        // trace: unrelated: the token is cached and shared across requests
         let assertion = self
             .assertions
             .assertion(ASSERTION_AUDIENCE)

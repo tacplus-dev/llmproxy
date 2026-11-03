@@ -195,6 +195,7 @@ impl Providers {
         let provider_model = match &route.latest {
             None => route.route.provider_model.clone(),
             Some(pattern) => {
+                // trace: unrelated: the listing is cached and shared across requests
                 let listing = self.listings.get(vendor, || self.list(vendor)).await?;
                 pick_latest(&listing, pattern, route.route.allow_preview)
                     .ok_or_else(|| {

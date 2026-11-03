@@ -30,6 +30,7 @@ pub struct MetadataToken {
 #[tonic::async_trait]
 impl Exchange for MetadataToken {
     async fn exchange(&self, http: &reqwest::Client) -> Result<Issued, String> {
+        // trace: unrelated: the token is cached and shared across requests
         let resp = http
             .get(format!("{}{TOKEN_PATH}", self.base_url))
             .header("Metadata-Flavor", "Google")
@@ -99,6 +100,7 @@ impl VertexClient {
             if let Some(token) = &page_token {
                 query.push(("pageToken", token.clone()));
             }
+            // trace: unrelated: the listing is cached and shared across requests
             let body = self
                 .send(
                     self.http
@@ -132,6 +134,7 @@ impl VertexClient {
             self.base_url, self.project, self.location
         );
         let body = build_request_body(req)?;
+        // trace: unrelated: leaves the fleet; vendor APIs carry no trace_id (README, Vendors)
         parse_response(&self.send(self.http.post(url).json(&body)).await?)
     }
 }

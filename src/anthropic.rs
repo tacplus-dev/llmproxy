@@ -205,6 +205,7 @@ impl AnthropicClient {
         &self,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, ProviderError> {
+        // trace: unrelated: leaves the fleet; vendor APIs carry no trace_id (README, Vendors)
         self.send(self.http.post(format!("{}/v1/messages", self.base_url)).json(body)).await
     }
 
@@ -231,6 +232,7 @@ impl AnthropicClient {
             if let Some(after) = &after {
                 query.push(("after_id", after.clone()));
             }
+            // trace: unrelated: the listing is cached and shared across requests
             let body = self
                 .send(self.http.get(format!("{}/v1/models", self.base_url)).query(&query))
                 .await?;

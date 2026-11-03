@@ -48,5 +48,9 @@ the looper then marks it `promoted` or `declined` here with the date.
   adapter sends no caching parameter (a test pins it). Left: `openai` and `google` in `LIVE_VENDORS` and one real
   panel call per vendor, once Vertex AI is on for jody1-328023 and OpenAI's identity provider trusts a public kernel
   issuer (tacplus-dev/fleet-seatrials#4).
+- **`looper-trace check` sees no handlers in llmproxy** (2026-11-03, #19): it reports `pass (0 handlers, 0
+  findings)` here, so the vendor, listing and credential calls' `// trace: unrelated:` markers (#19) and the
+  `tools/call` frames (#18) are checked only by reading the code. The tool is tacplus-dev/looper's: it should read the
+  `GenerateCompletionAsService` and `GenerateSessionTurn` handlers in src/service.rs.
 
 ## Promoted / declined
