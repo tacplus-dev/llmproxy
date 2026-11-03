@@ -11,3 +11,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-10-30 looper release v0.1.3 (https://github.com/tacplus-dev/llmproxy/releases/tag/v0.1.3)
 - 2026-10-31 looper issue Route to OpenAI, xAI and Gemini, resolve each vendor's latest model, return the resolved model id (doppelganger panel mode) (#13, 5d545af)
 - 2026-11-02 looper issue Build gate fails on main: Cargo.lock is stale against the tacplus 2.5.6 chassis (cargo build --locked) (#16, ca964e5)
+- 2026-11-03 looper issue Trace propagation: vendor and credential calls neither carry trace_id nor have their // trace: unrelated marker (#19, 908c28b)
