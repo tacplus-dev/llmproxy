@@ -52,5 +52,14 @@ the looper then marks it `promoted` or `declined` here with the date.
   findings)` here, so the vendor, listing and credential calls' `// trace: unrelated:` markers (#19) and the
   `tools/call` frames (#18) are checked only by reading the code. The tool is tacplus-dev/looper's: it should read the
   `GenerateCompletionAsService` and `GenerateSessionTurn` handlers in src/service.rs.
+- **A security check in the build, and the README's "Security checks" section** (2026-11-05, nightly scan): the
+  build pipeline produces no security report to read. ci.yml runs only generate, build and test, and the README has
+  no "Security checks" section, so advisories reach this repository only through the nightly scan's own
+  `cargo audit`. On 2026-11-05 that scan found no vulnerabilities, only the four unmaintained crates above. A
+  `cargo audit` step in ci.yml (allowing those warnings) would catch an advisory on the PR that brings it in.
+  A README section would then say what the step checks and where its report is. The README also has no
+  "Trace propagation" section, though the `// trace: unrelated:` markers on the vendor calls cite "(README,
+  Vendors)" for "vendor APIs carry no trace_id", and the README does not say that. A sentence there would make the
+  citation true (#19, `tacplus-dev/roadmap:decisions/trace-propagation-2026-11-03.md`).
 
 ## Promoted / declined
