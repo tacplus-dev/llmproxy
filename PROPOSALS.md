@@ -11,15 +11,20 @@ the looper then marks it `promoted` or `declined` here with the date.
   vulnerability, but they get no fixes. They come from tacplus' generated Rust, so the change belongs to the
   generator in tacplus-dev/tacplus (e.g. `backon` or tokio-retry for backoff, `rustls-pki-types`' PEM parsing for
   rustls-pemfile, a maintained YAML crate for serde_yaml), and this repository picks it up by regenerating.
-- **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11): the floor moved to 2.5 (tacplus.yaml, STATE.md)
-  and the current release is v0.1.2, but ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4".
-  #11 asks for the floor there too; ROADMAP.md is Jody's and loopers do not edit it, so it needs an agent at his
-  request: "tacplus floor 2.5" (and the current line).
-- **A floor patch can turn the gates red with no change here** (2026-10-30, #12): ci/tacplus.sh runs the floor's
-  latest patch, and tacplus 2.5.3 changed the generated chassis' dependencies (aws-lc-rs for rsa and the
+- **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11; 2026-11-06, #21): the floor moved to 2.5 (#11)
+  and then 2.6, pinned in tacplus.lock (#21; tacplus.yaml, STATE.md), and the current release is v0.1.5, but
+  ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4". ROADMAP.md is Jody's and loopers do not
+  edit it, so it needs an agent at his request: "tacplus floor 2.6" (and the current line).
+- **A floor patch can turn the gates red with no change here** (2026-10-30, #12; settled by #21): ci/tacplus.sh ran the
+  floor's latest patch, and tacplus 2.5.3 changed the generated chassis' dependencies (aws-lc-rs for rsa and the
   elliptic-curve stack, tacplus-dev/tacplus#186), so `cargo build --locked` failed on an untouched main until
   Cargo.lock was re-resolved. A scheduled run of ci.yml (e.g. daily) would catch the next one before a release tag
   does; the platform could also say in tacplus' release notes when a patch changes the generated dependency set.
+  From 2.6 (#21) the gates run the release tacplus.lock pins, so a new patch can no longer turn them red; it arrives
+  as a commit that moves the lock (`tacplus pin`), and that commit re-resolves Cargo.lock if it must. What stays
+  open: nothing here moves the lock when a 2.6.x patch ships (a scheduled `tacplus pin` check, or the nightly scan).
+  ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
+  the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
 - **The nightly scan rechecks xAI for keyless auth** (2026-10-31, #13): Jody's decision on #13 keeps xAI (Grok) out
   until it offers workload identity federation or another keyless method, and asks that "the nightly scan rechecks
