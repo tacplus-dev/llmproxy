@@ -67,9 +67,11 @@ A tacplus service: Rust, generated model in `target/generated-sources`.
 
 ## Building
 
-The gates ([ci.yml](.github/workflows/ci.yml)): generate with tacplus (`tacplus build`, or `ci/tacplus.sh build`
-where there is no `tacplus` on the path), then `cargo build --locked` and `cargo test --locked` (with `protoc` on
-the path: a dependency's build script runs it).
+The gates, `just gates` ([justfile](justfile); [ci.yml](.github/workflows/ci.yml) runs the same steps, and the build
+pipeline, tacplus-dev/build, runs `just gates` in the build image tacplus.lock pins): generate with tacplus
+(`tacplus build`, or `ci/tacplus.sh build` where there is no `tacplus` on the path), leaving every tracked file as it
+was, then `cargo build --locked` and `cargo test --locked` (with `protoc` on the path: a dependency's build script
+runs it).
 
 `tacplus.yaml` declares the floor, the tacplus line (`tacplus: "2.6"`); [tacplus.lock](tacplus.lock) pins the exact
 release and the build image, by digest, that every build runs (`ci/tacplus.sh` runs that image). A newer tacplus
