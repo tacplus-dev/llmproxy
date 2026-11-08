@@ -9,9 +9,14 @@ A tacplus service: Rust, generated model in `target/generated-sources`.
 
 ## Building
 
-The gates ([ci.yml](.github/workflows/ci.yml)): generate with tacplus at the floor `tacplus.yaml` declares
-(`tacplus build`, or `ci/tacplus.sh build` where there is no `tacplus` on the path), then
-`cargo build --locked` and `cargo test --locked` (with `protoc` on the path: a dependency's build script runs it).
+The gates ([ci.yml](.github/workflows/ci.yml)): generate with tacplus (`tacplus build`, or `ci/tacplus.sh build`
+where there is no `tacplus` on the path), then `cargo build --locked` and `cargo test --locked` (with `protoc` on
+the path: a dependency's build script runs it).
+
+`tacplus.yaml` declares the floor, the tacplus line (`tacplus: "2.6"`); [tacplus.lock](tacplus.lock) pins the exact
+release and the build image, by digest, that every build runs (`ci/tacplus.sh` runs that image). A newer tacplus
+patch arrives only as a commit that moves the lock: in the line's build image,
+`docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:$PWD" -w "$PWD" ghcr.io/tacplus-dev/tacplus/build:2.6 tacplus pin`.
 
 ## Releasing
 
