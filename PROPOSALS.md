@@ -11,7 +11,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   vulnerability, but they get no fixes. They come from tacplus' generated Rust, so the change belongs to the
   generator in tacplus-dev/tacplus (e.g. `backon` or tokio-retry for backoff, `rustls-pki-types`' PEM parsing for
   rustls-pemfile, a maintained YAML crate for serde_yaml), and this repository picks it up by regenerating.
-- **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11; 2026-11-06, #21): the floor moved to 2.5 (#11)
+- **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11; 2026-11-06, #21; 2026-11-07, #22, where Jody asked for "Now" to name the floor in force): the floor moved to 2.5 (#11)
   and then 2.6, pinned in tacplus.lock (#21; tacplus.yaml, STATE.md), and the current release is v0.1.5, but
   ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4". ROADMAP.md is Jody's and loopers do not
   edit it, so it needs an agent at his request: "tacplus floor 2.6" (and the current line).
