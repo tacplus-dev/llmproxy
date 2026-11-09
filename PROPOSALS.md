@@ -25,5 +25,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   open: nothing here moves the lock when a 2.6.x patch ships (a scheduled `tacplus pin` check, or the nightly scan).
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
+- **The operator's securityContext for llmproxy: 65532** (2026-11-09, #25): the release image now runs as
+  `USER 65532:65532` (the UID/GID blobstore#18 chose for the fleet), and llmproxy writes nothing to disk, so it needs
+  no volume and no `fsGroup`. The pod the operator renders should set `runAsNonRoot: true`, `runAsUser: 65532` and
+  `runAsGroup: 65532` (and may set `readOnlyRootFilesystem: true`), so the cluster enforces what the image declares.
+  That change belongs in tacplus-dev/operator.
 
 ## Promoted / declined
