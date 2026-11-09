@@ -23,6 +23,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   From 2.6 (#21) the gates run the release tacplus.lock pins, so a new patch can no longer turn them red; it arrives
   as a commit that moves the lock (`tacplus pin`), and that commit re-resolves Cargo.lock if it must. What stays
   open: nothing here moves the lock when a 2.6.x patch ships (a scheduled `tacplus pin` check, or the nightly scan).
+  On 2026-11-09 (nightly scan) tacplus.lock still pinned 2.6.1, three patches behind the line's v2.6.4
+  (`gh release list --repo tacplus-dev/tacplus`: v2.6.2, v2.6.3 and v2.6.4, all on 2026-11-08).
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
