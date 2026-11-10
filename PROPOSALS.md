@@ -24,7 +24,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   as a commit that moves the lock (`tacplus pin`), and that commit re-resolves Cargo.lock if it must. What stays
   open: nothing here moves the lock when a 2.6.x patch ships (a scheduled `tacplus pin` check, or the nightly scan).
   On 2026-11-09 (nightly scan) tacplus.lock still pinned 2.6.1, three patches behind the line's v2.6.4
-  (`gh release list --repo tacplus-dev/tacplus`: v2.6.2, v2.6.3 and v2.6.4, all on 2026-11-08).
+  (`gh release list --repo tacplus-dev/tacplus`: v2.6.2, v2.6.3 and v2.6.4, all on 2026-11-08). On 2026-11-10 it still
+  pinned 2.6.1, now four behind v2.6.5 (2026-11-09); the lock will have to move anyway for tacplus#368 (#34-#55).
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -68,5 +69,13 @@ the looper then marks it `promoted` or `declined` here with the date.
   "Trace propagation" section, though the `// trace: unrelated:` markers on the vendor calls cite "(README,
   Vendors)" for "vendor APIs carry no trace_id", and the README does not say that. A sentence there would make the
   citation true (#19, `tacplus-dev/roadmap:decisions/trace-propagation-2026-11-03.md`).
+  Update 2026-11-10 (nightly scan): the build pipeline now runs looper-scan on this repository (tacplus-dev/looper
+  README, Security checks), and its first report is filed as #27-#56. Still open here: the README's own "Security
+  checks" pointer and the README sentence behind the trace markers' citation.
+- **A `security-exceptions.yaml` for generated test fixtures** (2026-11-10, nightly scan, #27-#33): gitleaks fails
+  every build on seven false positives in tacplus-generated code: JWT-shaped fixtures in the chassis logger's
+  redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
+  Until it ships, Jody could accept them in a root `security-exceptions.yaml` (id, reason, decided_by, expires), so
+  that this repository's builds, the land of #25 among them, are not blocked by code it does not own.
 
 ## Promoted / declined
