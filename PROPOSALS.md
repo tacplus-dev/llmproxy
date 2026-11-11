@@ -77,5 +77,9 @@ the looper then marks it `promoted` or `declined` here with the date.
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
   Until it ships, Jody could accept them in a root `security-exceptions.yaml` (id, reason, decided_by, expires), so
   that this repository's builds, the land of #25 among them, are not blocked by code it does not own.
+  Done 2026-11-11 (#33, on Jody's hub delegation): the seven ids are excepted until 2027-02-10. What stays open: the
+  ids carry the generated line, so moving tacplus.lock (#34-#55) can shift them and turn the build red again; that
+  commit renews the ids it moves. Remove the entries once tacplus-dev/looper#108 (SAST skips the generated tree)
+  lands or tacplus' templates stop matching (tacplus#376), whichever is first.
 
 ## Promoted / declined
