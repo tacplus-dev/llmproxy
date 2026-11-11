@@ -26,6 +26,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   On 2026-11-09 (nightly scan) tacplus.lock still pinned 2.6.1, three patches behind the line's v2.6.4
   (`gh release list --repo tacplus-dev/tacplus`: v2.6.2, v2.6.3 and v2.6.4, all on 2026-11-08). On 2026-11-10 it still
   pinned 2.6.1, now four behind v2.6.5 (2026-11-09); the lock will have to move anyway for tacplus#368 (#34-#55).
+  On 2026-11-11 it still pinned 2.6.1, seven patches behind v2.6.8 (2026-11-11); 2.6 is still the newest line.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
