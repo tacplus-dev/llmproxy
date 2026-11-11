@@ -78,5 +78,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
   Until it ships, Jody could accept them in a root `security-exceptions.yaml` (id, reason, decided_by, expires), so
   that this repository's builds, the land of #25 among them, are not blocked by code it does not own.
+- **The operator's securityContext for llmproxy: 65532** (2026-11-09, #25): the release image now runs as
+  `USER 65532:65532` (the UID/GID blobstore#18 chose for the fleet), and llmproxy writes nothing to disk, so it needs
+  no volume and no `fsGroup`. The pod the operator renders should set `runAsNonRoot: true`, `runAsUser: 65532` and
+  `runAsGroup: 65532` (and may set `readOnlyRootFilesystem: true`), so the cluster enforces what the image declares.
+  That change belongs in tacplus-dev/operator.
 
 ## Promoted / declined

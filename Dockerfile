@@ -10,6 +10,14 @@ RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# llmproxy needs no root: it runs as a fixed UID/GID, not a useradd default, so
+# the operator's securityContext (runAsUser/runAsGroup 65532) can name it (#25).
+# It writes nothing to disk (its caches are in memory; the scripts below and the
+# binaries are read-only to it), so it owns no directory and has no home.
+RUN groupadd --system --gid 65532 llmproxy \
+ && useradd --system --uid 65532 --gid 65532 --no-create-home \
+      --home-dir /nonexistent --shell /usr/sbin/nologin llmproxy
+
 # No grpc_health_probe: the operator renders tcpSocket probes on 8443
 # (grpcProbe8443 in the chart), so the binary would be dead weight.
 COPY target/release/llmproxy /usr/local/bin/llmproxy
@@ -22,6 +30,7 @@ COPY scripts /usr/share/llmproxy/scripts
 ARG TARGETARCH
 COPY launcher-linux-${TARGETARCH} /usr/local/bin/launcher
 ENV LAUNCH_CMD="llmproxy" HEALTH_PORT=8443
+USER 65532:65532
 ENTRYPOINT ["launcher"]
 
 # Set by the release (ci/release-image.sh): the version without its v, and the commit.
