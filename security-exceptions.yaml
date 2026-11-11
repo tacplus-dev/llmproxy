@@ -1,0 +1,34 @@
+# Accepted security findings (tacplus-dev/looper README, Security checks). Each entry is dated: renew or remove it.
+#
+# #27 to #33: gitleaks false positives in the code tacplus 2.6.1 generates (target/generated-sources, never
+# committed). Exactly these seven ids, not the paths. They expire on 2027-02-10, or earlier once
+# tacplus-dev/looper#108 (services' SAST skips the generated tree) lands. Upstream: tacplus#376.
+exceptions:
+  - id: target/generated-sources/model/s2sm/mod.rs:private-key:1659
+    reason: "#33, false positive in tacplus-generated code (service_manager.rs.tmpl): it builds a PEM header string (String::from(\"-----BEGIN PRIVATE KEY-----\\n\")) around DER read at run time, and contains no key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: target/generated-sources/model/chassis/logger/src/redact.rs:generic-api-key:112
+    reason: "#27, false positive in tacplus-generated code: the chassis log redactor's own pattern for spotting API keys, not a key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: target/generated-sources/model/chassis/logger/src/redact.rs:generic-api-key:130
+    reason: "#28, false positive in tacplus-generated code: the chassis log redactor's own pattern for spotting API keys, not a key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: target/generated-sources/model/chassis/logger/src/redact.rs:generic-api-key:171
+    reason: "#29, false positive in tacplus-generated code: the chassis log redactor's own pattern for spotting API keys, not a key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: target/generated-sources/model/chassis/logger/src/redact.rs:generic-api-key:184
+    reason: "#30, false positive in tacplus-generated code: the chassis log redactor's own pattern for spotting API keys, not a key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: target/generated-sources/model/chassis/logger/src/redact.rs:generic-api-key:215
+    reason: "#31, false positive in tacplus-generated code: the chassis log redactor's own pattern for spotting API keys, not a key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: target/generated-sources/model/chassis/logger/src/redact.rs:generic-api-key:245
+    reason: "#32, false positive in tacplus-generated code: the chassis log redactor's own pattern for spotting API keys, not a key"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
