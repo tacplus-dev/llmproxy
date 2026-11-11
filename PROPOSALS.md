@@ -11,6 +11,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   vulnerability, but they get no fixes. They come from tacplus' generated Rust, so the change belongs to the
   generator in tacplus-dev/tacplus (e.g. `backon` or tokio-retry for backoff, `rustls-pki-types`' PEM parsing for
   rustls-pemfile, a maintained YAML crate for serde_yaml), and this repository picks it up by regenerating.
+  Update 2026-11-11 (#56, Jody's hub triage): the four are accepted in security-exceptions.yaml until 2027-02-10,
+  owner tacplus (tacplus-dev/tacplus#308, #319, #320, approved and landing). The commit that moves tacplus.lock to the
+  2.6 patch carrying them re-resolves Cargo.lock and removes the four entries; if none ships by 2027-02-10, the build
+  fails until they are renewed.
 - **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11; 2026-11-06, #21; 2026-11-07, #22, where Jody asked for "Now" to name the floor in force): the floor moved to 2.5 (#11)
   and then 2.6, pinned in tacplus.lock (#21; tacplus.yaml, STATE.md), and the current release is v0.1.5, but
   ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4". ROADMAP.md is Jody's and loopers do not
@@ -28,6 +32,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   pinned 2.6.1, now four behind v2.6.5 (2026-11-09); the lock will have to move anyway for tacplus#368 (#34-#55).
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
+  #56 carries the fix with its SHA pins, waiting on tacplus-dev/looper#115 like them.
 
 - **The nightly scan rechecks xAI for keyless auth** (2026-10-31, #13): Jody's decision on #13 keeps xAI (Grok) out
   until it offers workload identity federation or another keyless method, and asks that "the nightly scan rechecks
@@ -77,5 +82,13 @@ the looper then marks it `promoted` or `declined` here with the date.
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
   Until it ships, Jody could accept them in a root `security-exceptions.yaml` (id, reason, decided_by, expires), so
   that this repository's builds, the land of #25 among them, are not blocked by code it does not own.
+
+- **Keep the SHA-pinned actions moving** (2026-11-11, #56): once #56 pins each action in ci.yml and release.yml to a
+  commit SHA (the tag in a comment; it waits on tacplus-dev/looper#115 for a token that may push
+  `.github/workflows/`), a security fix in an action arrives only when someone moves the pin. Dependabot's
+  `github-actions` ecosystem (a `.github/dependabot.yml`) or a platform equivalent (the nightly scan comparing each pin
+  with its tag's latest release) would propose the moves. planning-files.yml still calls
+  `tacplus-dev/looper/.github/workflows/planning-files.yml@main`: an in-org reusable workflow that semgrep does not
+  flag and that the platform moves for every repository; pinning it is the platform's call (tacplus-dev/looper).
 
 ## Promoted / declined
