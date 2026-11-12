@@ -27,6 +27,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   (`gh release list --repo tacplus-dev/tacplus`: v2.6.2, v2.6.3 and v2.6.4, all on 2026-11-08). On 2026-11-10 it still
   pinned 2.6.1, now four behind v2.6.5 (2026-11-09); the lock will have to move anyway for tacplus#368 (#34-#55).
   On 2026-11-11 it still pinned 2.6.1, seven patches behind v2.6.8 (2026-11-11); 2.6 is still the newest line.
+  On 2026-11-12 it still pinned 2.6.1, nine patches behind v2.6.10 (2026-11-12); 2.6 is still the newest line.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -73,6 +74,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   Update 2026-11-10 (nightly scan): the build pipeline now runs looper-scan on this repository (tacplus-dev/looper
   README, Security checks), and its first report is filed as #27-#56. Still open here: the README's own "Security
   checks" pointer and the README sentence behind the trace markers' citation.
+  Update 2026-11-12 (nightly scan): the report the nightly scan was handed is of b998d87, the head of the
+  `looper/llmproxy-25` branch (#25), not of main (24bbb18). That is why it has no semgrep `missing-user-entrypoint`
+  finding even though main's Dockerfile still has no `USER`. The scan should read the report of main's latest build,
+  or the report should name its branch (tacplus-dev/looper's).
 - **A `security-exceptions.yaml` for generated test fixtures** (2026-11-10, nightly scan, #27-#33): gitleaks fails
   every build on seven false positives in tacplus-generated code: JWT-shaped fixtures in the chassis logger's
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
