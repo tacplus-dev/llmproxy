@@ -28,6 +28,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   pinned 2.6.1, now four behind v2.6.5 (2026-11-09); the lock will have to move anyway for tacplus#368 (#34-#55).
   On 2026-11-11 it still pinned 2.6.1, seven patches behind v2.6.8 (2026-11-11); 2.6 is still the newest line.
   On 2026-11-12 it still pinned 2.6.1, nine patches behind v2.6.10 (2026-11-12); 2.6 is still the newest line.
+  On 2026-11-13 it still pinned 2.6.1, ten patches behind v2.6.11 (2026-11-13); 2.6 is still the newest line.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -78,6 +79,12 @@ the looper then marks it `promoted` or `declined` here with the date.
   `looper/llmproxy-25` branch (#25), not of main (24bbb18). That is why it has no semgrep `missing-user-entrypoint`
   finding even though main's Dockerfile still has no `USER`. The scan should read the report of main's latest build,
   or the report should name its branch (tacplus-dev/looper's).
+  Update 2026-11-13 (nightly scan): still so. Today's report is again of b998d87, which is not on main (b9374ef),
+  so the build's checks have still not reported on main's Dockerfile. Its Cargo.lock is the same as main's, so the
+  dependency findings hold for main. The scan's own `just gates` cannot run in the scan's environment: there is no
+  Docker daemon for the tacplus build image (`failed to connect to the docker API at unix:///var/run/docker.sock`).
+  So "gates on main" rests on ci.yml's last run on main (43195511918, success, 2026-11-12). The scan needs Docker,
+  or the build's own gate result for main (tacplus-dev/looper's).
 - **A `security-exceptions.yaml` for generated test fixtures** (2026-11-10, nightly scan, #27-#33): gitleaks fails
   every build on seven false positives in tacplus-generated code: JWT-shaped fixtures in the chassis logger's
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
