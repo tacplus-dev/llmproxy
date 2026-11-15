@@ -1,0 +1,23 @@
+# Accepted security findings (tacplus-dev/looper README, Security checks). Each entry is dated: renew or remove it.
+#
+# #56: four unmaintained crates (cargo-deny and osv-scanner, UNKNOWN, not vulnerabilities) that only tacplus'
+# generated Rust chassis pulls into Cargo.lock. Their owner is tacplus: the generator replaces them in
+# tacplus-dev/tacplus#308, #319 and #320, and this repository drops them by moving tacplus.lock to the 2.6 patch
+# that ships those fixes and re-resolving Cargo.lock; that commit removes these entries. They expire on 2027-02-10.
+exceptions:
+  - id: RUSTSEC-2025-0012
+    reason: "#56, backoff 0.4.0 is unmaintained; owner tacplus: the generated chassis httpclient declares it, removed upstream in tacplus-dev/tacplus#319"
+    decided_by: "jodydadescott (hub triage on #56, 2026-11-10)"
+    expires: 2027-02-10
+  - id: RUSTSEC-2024-0384
+    reason: "#56, instant 0.1.13 is unmaintained, pulled in only by backoff 0.4.0; owner tacplus: removed with backoff in tacplus-dev/tacplus#319"
+    decided_by: "jodydadescott (hub triage on #56, 2026-11-10)"
+    expires: 2027-02-10
+  - id: RUSTSEC-2025-0134
+    reason: "#56, rustls-pemfile 2.2.0 is unmaintained; owner tacplus: the generated chassis and model use it, moved to rustls-pki-types in tacplus-dev/tacplus#308"
+    decided_by: "jodydadescott (hub triage on #56, 2026-11-10)"
+    expires: 2027-02-10
+  - id: RUSTSEC-2024-0449
+    reason: "#56, unsafe-libyaml 0.2.11 is unmaintained, via the deprecated serde_yaml 0.9; owner tacplus: the generated chassis and model use it, replaced in tacplus-dev/tacplus#320"
+    decided_by: "jodydadescott (hub triage on #56, 2026-11-10)"
+    expires: 2027-02-10
