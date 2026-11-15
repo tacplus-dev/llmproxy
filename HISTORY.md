@@ -14,3 +14,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-03 looper issue Trace propagation: vendor and credential calls neither carry trace_id nor have their // trace: unrelated marker (#19, 908c28b)
 - 2026-11-07 looper issue tacplus floor 2.5 is behind the latest line 2.6: bump it (2.6 builds from a committed tacplus.lock; there is no tacplus:2.6 image) (#21)
 - 2026-11-08 looper issue Pin the build: floor 2.6 and a committed tacplus.lock, so the build pipeline and its security checks run on this repository (#22, 2406f18)
+- 2026-11-15 looper issue gitleaks CRITICAL: target/generated-sources/model/s2sm/mod.rs:private-key:1659 at target/generated-sources/model/s2sm/mod.rs:1659 (#33)
