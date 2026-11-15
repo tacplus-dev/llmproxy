@@ -29,6 +29,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   On 2026-11-11 it still pinned 2.6.1, seven patches behind v2.6.8 (2026-11-11); 2.6 is still the newest line.
   On 2026-11-12 it still pinned 2.6.1, nine patches behind v2.6.10 (2026-11-12); 2.6 is still the newest line.
   On 2026-11-13 it still pinned 2.6.1, ten patches behind v2.6.11 (2026-11-13); 2.6 is still the newest line.
+  On 2026-11-15 it still pinned 2.6.1, eleven patches behind v2.6.12 (2026-11-14); 2.6 is still the newest line.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -85,6 +86,11 @@ the looper then marks it `promoted` or `declined` here with the date.
   Docker daemon for the tacplus build image (`failed to connect to the docker API at unix:///var/run/docker.sock`).
   So "gates on main" rests on ci.yml's last run on main (43195511918, success, 2026-11-12). The scan needs Docker,
   or the build's own gate result for main (tacplus-dev/looper's).
+  Update 2026-11-15 (nightly scan): the report is now of acc06ff, the head of `looper/llmproxy-56` (#56), again not
+  main (4797d4e). Its Cargo.lock and Dockerfile are main's, so its findings hold for main (the three new quinn
+  advisories are #60), but its eight "accepted" findings rest on that branch's security-exceptions.yaml, which main
+  does not have: on main the four unmaintained crates (#56) are not excepted. `just gates` again cannot run here (no
+  Docker socket); ci.yml on main, 43405010835 (4797d4e, 2026-11-13), passed.
 - **A `security-exceptions.yaml` for generated test fixtures** (2026-11-10, nightly scan, #27-#33): gitleaks fails
   every build on seven false positives in tacplus-generated code: JWT-shaped fixtures in the chassis logger's
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
