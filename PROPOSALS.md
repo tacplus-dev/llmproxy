@@ -96,5 +96,21 @@ the looper then marks it `promoted` or `declined` here with the date.
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
   Until it ships, Jody could accept them in a root `security-exceptions.yaml` (id, reason, decided_by, expires), so
   that this repository's builds, the land of #25 among them, are not blocked by code it does not own.
+- **The operator's securityContext for llmproxy: 65532** (2026-11-09, #25): the release image now runs as
+  `USER 65532:65532` (the UID/GID blobstore#18 chose for the fleet), and llmproxy writes nothing to disk, so it needs
+  no volume and no `fsGroup`. The pod the operator renders should set `runAsNonRoot: true`, `runAsUser: 65532` and
+  `runAsGroup: 65532` (and may set `readOnlyRootFilesystem: true`), so the cluster enforces what the image declares.
+  That change belongs in tacplus-dev/operator.
+- **The security floor deadlocks this repository's lands** (2026-11-15, #25): the build's security job fails the
+  pipeline on every HIGH finding it does not except, and main carries two sets owned by different issues: the
+  Dockerfile's `missing-user-entrypoint` (#25) and the 22 `cargo-deny:unlicensed:<crate>` findings on the crates
+  tacplus generates (#34-#55, fixed upstream in tacplus-dev/tacplus#368, its 2.6 backport #390 unmerged). Each
+  issue's land is red on the other's findings (the land of #56 on 2026-11-15 failed the same way), so no change can
+  land until a human breaks the tie. Jody's decision (2026-11-15, on #25): the 22 cargo-deny ids are accepted in a
+  root `security-exceptions.yaml` (owner tacplus, `decided_by: jodydadescott`, expiring 2026-12-31), landed with #25's
+  fix, and dropped in the same land that moves tacplus.lock to the 2.6 patch carrying #368 (#34-#55 stay open until
+  then); the same decision covers messaging#18 and gateway#36. Still open: the floor could fail a land only on
+  findings its diff adds (the ones `new` since main's report), and leave main's standing findings to their own
+  issues (tacplus-dev/looper), so that two issues' findings can never deadlock a repository's lands again.
 
 ## Promoted / declined
