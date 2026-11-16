@@ -30,6 +30,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   On 2026-11-12 it still pinned 2.6.1, nine patches behind v2.6.10 (2026-11-12); 2.6 is still the newest line.
   On 2026-11-13 it still pinned 2.6.1, ten patches behind v2.6.11 (2026-11-13); 2.6 is still the newest line.
   On 2026-11-15 it still pinned 2.6.1, eleven patches behind v2.6.12 (2026-11-14); 2.6 is still the newest line.
+  On 2026-11-16 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line. No
+  2.6 patch carries tacplus-dev/tacplus#368 yet (its backport tacplus-dev/tacplus#390 is unmerged).
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -91,6 +93,13 @@ the looper then marks it `promoted` or `declined` here with the date.
   advisories are #60), but its eight "accepted" findings rest on that branch's security-exceptions.yaml, which main
   does not have: on main the four unmaintained crates (#56) are not excepted. `just gates` again cannot run here (no
   Docker socket); ci.yml on main, 43405010835 (4797d4e, 2026-11-13), passed.
+  Update 2026-11-16 (nightly scan): settled for the report. Today's is of c05f86e, on main (main's head 6a36833 changes
+  only HISTORY.md), and its exceptions are main's security-exceptions.yaml. Its 41 findings include none that is `new`
+  or blocking. The 22 accepted ones are #34-#55, and the other 19 are #56, #58 and #60. Still open: the scan's own
+  `just gates`. There is now a `tacplus` on the path, but it runs the build image through Docker and still fails with
+  no socket (`failed to connect to the docker API at unix:///var/run/docker.sock`). ci.yml on main, 43770636130
+  (6a36833, 2026-11-15), passed. STATE.md's "Known gaps" still says `cargo audit` reports no vulnerabilities, but
+  rustix (#58) and quinn-proto/quinn-udp (#60) have advisories with fixes.
 - **A `security-exceptions.yaml` for generated test fixtures** (2026-11-10, nightly scan, #27-#33): gitleaks fails
   every build on seven false positives in tacplus-generated code: JWT-shaped fixtures in the chassis logger's
   redaction tests and PEM armour built at runtime in the service manager. The lasting fix is in tacplus' templates.
