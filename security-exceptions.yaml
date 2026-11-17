@@ -1,0 +1,12 @@
+# The security findings llmproxy accepts, read by the build's security checks
+# (looper-scan, tacplus-dev/looper README: Security checks). Each entry needs an id,
+# a reason, who decided and when it expires; an expired one fails the checks again.
+#
+# #64: trivy's DS-0026 (no HEALTHCHECK in the Dockerfile). Kubernetes ignores a Docker
+# HEALTHCHECK: the operator renders tcpSocket probes on 8443 (grpcProbe8443), which
+# are the health check. Decided by Jody on #64, 2026-11-17; it expires on 2027-05-17.
+exceptions:
+  - id: DS-0026
+    reason: "#64, the Dockerfile has no HEALTHCHECK by design: Kubernetes ignores it, and the operator's tcpSocket probes on 8443 (grpcProbe8443) are the health check"
+    decided_by: "jodydadescott (hub on #64, 2026-11-17)"
+    expires: 2027-05-17
