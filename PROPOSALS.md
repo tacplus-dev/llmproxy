@@ -121,5 +121,13 @@ the looper then marks it `promoted` or `declined` here with the date.
   then); the same decision covers messaging#18 and gateway#36. Still open: the floor could fail a land only on
   findings its diff adds (the ones `new` since main's report), and leave main's standing findings to their own
   issues (tacplus-dev/looper), so that two issues' findings can never deadlock a repository's lands again.
+- **The build's security report has no image scan since 83599bd** (2026-11-17, #63): the report of 83599bd lists
+  43 findings, from cargo-deny, osv-scanner and semgrep only. It has no trivy image finding and does not say the image
+  scan was skipped. On the same day, the report of df73e20 had the 46 HIGH findings of #63 and the 158 of #64. A
+  remote scan of the pinned base (`trivy image --image-src remote --scanners vuln --pkg-types os debian:trixie-slim`,
+  still `sha256:a72b4433…`) still finds 47 HIGH: the 46 of #63, unfixed, and zlib1g CVE-2026-85091, fixed upstream and
+  covered by #62's build-time upgrade. Jody's decision on #63 relies on the nightly turning these findings blocking
+  once Debian fixes them, so a silent gap in the image scan would hide that. The pipeline (tacplus-dev/build,
+  looper-scan) should either scan the release image on every build or say in the report that it did not.
 
 ## Promoted / declined
