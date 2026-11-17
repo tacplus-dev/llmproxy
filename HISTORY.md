@@ -16,3 +16,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-08 looper issue Pin the build: floor 2.6 and a committed tacplus.lock, so the build pipeline and its security checks run on this repository (#22, 2406f18)
 - 2026-11-15 looper issue gitleaks CRITICAL: target/generated-sources/model/s2sm/mod.rs:private-key:1659 at target/generated-sources/model/s2sm/mod.rs:1659 (#33)
 - 2026-11-15 looper issue Release image runs as root: semgrep missing-user-entrypoint (HIGH) on Dockerfile:25 fails the build's security checks (#25)
+- 2026-11-17 looper issue Release image ships zlib1g 1:1.3.1-1+b1 (CVE-2026-85091 HIGH, blocking; CVE-2026-27171): the Dockerfile never applies Debian's fixed 1+deb13u1 (#62)
