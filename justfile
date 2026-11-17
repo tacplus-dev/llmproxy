@@ -25,5 +25,13 @@ build: generate
 test: build
   cargo test --locked
 
+# The release image takes Debian's pending security updates at every build (#62): the base tag can lag
+# trixie-security by weeks (zlib1g 1+b1, CVE-2026-85091), so the image's apt step upgrades before it installs.
+image-upgrade:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  grep -A1 -E '^RUN apt-get update' Dockerfile | tail -n1 | grep -q 'apt-get upgrade -y' \
+    || { echo "Dockerfile: the apt step must run 'apt-get upgrade' right after 'apt-get update' (#62)" >&2; exit 1; }
+
 # The gates every change passes before it is pushed.
-gates: test
+gates: image-upgrade test
