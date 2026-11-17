@@ -41,12 +41,12 @@ image-upgrade:
     || { echo "Dockerfile: the apt step must run 'apt-get upgrade' right after 'apt-get update' (#62)" >&2; exit 1; }
 
 # The release image's base is pinned by digest (#63): a move of the tag cannot change the image, and a base fix
-# arrives as a commit that moves the digest, which the build's security checks scan.
+# arrives as a commit that moves the digest, which the build's security checks scan. Every FROM is (#64).
 image-base:
   #!/usr/bin/env bash
   set -euo pipefail
-  base="$(grep -E '^FROM ' Dockerfile | tail -n1 | awk '{print $2}' || true)"
-  [[ "$base" == *@sha256:* ]] || { echo "Dockerfile: the base must be pinned by digest (name:tag@sha256:...), not '${base}' (#63)" >&2; exit 1; }
+  unpinned="$(grep -E '^FROM ' Dockerfile | grep -vE '^FROM [^ ]+@sha256:[0-9a-f]{64}( |$)' || true)"
+  test -z "$unpinned" || { echo "Dockerfile: every FROM must be pinned by digest (name:tag@sha256:...), not: $unpinned (#63, #64)" >&2; exit 1; }
 
 # The gates every change passes before it is pushed.
 gates: image-user image-upgrade image-base test
