@@ -44,7 +44,9 @@ Running the workflow by hand (`gh workflow run release.yml -f version=v0.1.1`) i
 architectures and prints the tags and notes that version would get, and publishes nothing.
 
 The image runs under the [launcher](https://github.com/tacplus-dev/launcher), built from source at the commit
-`LAUNCHER_COMMIT` in release.yml names.
+`LAUNCHER_COMMIT` in release.yml names (launcher v0.1.0), with the Go its go.mod's `toolchain` line names: the
+release fails unless each launcher binary was built with that Go and `govulncheck -mode=binary` finds nothing in
+it (#68), since the build's security checks do not read the launcher.
 
 ## Provenance
 

@@ -29,8 +29,9 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
   VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
-  # The launcher every service image runs under (Dockerfile), built from source at this commit.
-  LAUNCHER_COMMIT: d130eab7fcb42413fe0d2bdf5543e4edc23f9747
+  # The launcher every service image runs under (Dockerfile), built from source at this commit: launcher v0.1.0,
+  # whose go.mod's toolchain line is go1.27.4 (#68).
+  LAUNCHER_COMMIT: 0e139cac8c43e9c98508052337d147eee0e8d493
 
 jobs:
   check:
@@ -92,11 +93,25 @@ jobs:
         with:
           go-version-file: target/launcher-src/go.mod
           cache: false
+      # Built with the Go its go.mod's toolchain line names (GOTOOLCHAIN=auto fetches it if setup-go installed an
+      # older one), and released only when that is the Go in each binary and govulncheck finds nothing in it: the
+      # build's security checks never read the launcher (#68).
       - name: launcher, both architectures
         working-directory: target/launcher-src
+        env:
+          GOTOOLCHAIN: auto
         run: |
+          set -euo pipefail
+          want="$(awk '$1 == "toolchain" { print $2 }' go.mod)"
+          [[ -n $want ]] || { echo "launcher $LAUNCHER_COMMIT: go.mod lacks a toolchain line (#68)"; exit 1; }
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "../launcher/launcher-linux-$arch" .
+            got="$(go version "../launcher/launcher-linux-$arch" | awk '{ print $2 }')"
+            [[ $got == "$want" ]] || { echo "launcher-linux-$arch: built with $got, not $want"; exit 1; }
+            echo "launcher-linux-$arch: $got"
+          done
+          for arch in amd64 arm64; do
+            go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary "../launcher/launcher-linux-$arch"
           done
       # The Dockerfile's apt-get runs on each target architecture.
       - uses: docker/setup-qemu-action@v3
