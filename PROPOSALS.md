@@ -146,6 +146,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   release without a finding. The pinned d130eab7, built with go1.27.0, has 7 reachable stdlib advisories that only a
   hand scan found. `looper-scan image` already runs `govulncheck -mode=binary` on the looper image's Go binaries
   (looper#167). Running it on the release image's `/usr/local/bin` too, or on the launcher binaries before
-  `docker build`, would catch the next one. The pipeline is tacplus-dev/looper's.
+  `docker build`, would catch the next one. The pipeline is tacplus-dev/looper's. Since #68, release.yml runs
+  `govulncheck -mode=binary` on the launcher binaries before `docker build` and fails the release on a finding: that
+  catches it at a release, not between releases.
 
 ## Promoted / declined
