@@ -6,8 +6,12 @@ FROM debian:trixie-slim
 # makes an outbound TLS call of its own to api.anthropic.com — the ONE
 # outbound credential-bearing call in the whole fleet (see src/anthropic.rs).
 # libssl is already present in trixie-slim; ca-certificates is not.
+# zlib1g's fix is installed from trixie-security by version (#67): the base
+# ships 1+b1 (CVE-2026-85091), so a build either has 1+deb13u1 or fails.
+# Drop the pin with the move to a base that carries it.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends ca-certificates \
+      zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
  && rm -rf /var/lib/apt/lists/*
 
 # No grpc_health_probe: the operator renders tcpSocket probes on 8443

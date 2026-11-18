@@ -25,5 +25,13 @@ build: generate
 test: build
   cargo test --locked
 
+# zlib1g is installed from trixie-security by version (#67): the base ships 1+b1 (CVE-2026-85091), and a
+# version builds the same package every time or fails. It moves with the base.
+image-zlib:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  grep -A3 -E '^RUN apt-get update' Dockerfile | grep -qF 'zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1' \
+    || { echo "Dockerfile: the apt step must install zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 by version (#67)" >&2; exit 1; }
+
 # The gates every change passes before it is pushed.
-gates: test
+gates: image-zlib test
