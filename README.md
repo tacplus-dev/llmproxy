@@ -81,6 +81,8 @@ patch arrives only as a commit that moves the lock: in the line's build image,
 The release image's base is pinned the same way: the Dockerfile's `FROM` names `debian:trixie-slim` by the digest
 of its multi-arch index, and `just gates` fails on a `FROM` without one (#63, #64). The base's fixes arrive only as a
 commit that moves the digest to the tag's current index (`docker buildx imagetools inspect debian:trixie-slim`).
+Until a digest carries trixie-security's zlib1g, the image installs `zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1` by
+version (CVE-2026-85091, #67), which `just gates` checks; the pin goes in the commit that moves the digest past it.
 
 ## Releasing
 
