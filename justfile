@@ -25,5 +25,19 @@ build: generate
 test: build
   cargo test --locked
 
+# The release image's launcher (PID 1) is pinned to a launcher commit by its full hash, and release.yml fails the
+# release unless the launcher it builds is built with the Go its go.mod's toolchain line names and govulncheck
+# finds no vulnerability in the binary (#68): the build's security checks never read it.
+launcher:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  wf=.github/workflows/release.yml
+  grep -qE '^  LAUNCHER_COMMIT: [0-9a-f]{40}$' "$wf" \
+    || { echo "$wf: LAUNCHER_COMMIT must name a tacplus-dev/launcher commit by its full hash (#68)" >&2; exit 1; }
+  grep -qF 'govulncheck@' "$wf" && grep -qF -- '-mode=binary' "$wf" \
+    || { echo "$wf: the release must run govulncheck -mode=binary on the launcher it builds (#68)" >&2; exit 1; }
+  grep -qF 'go.mod lacks a toolchain line' "$wf" \
+    || { echo "$wf: the release must check the launcher's Go against its go.mod's toolchain line (#68)" >&2; exit 1; }
+
 # The gates every change passes before it is pushed.
-gates: test
+gates: launcher test
