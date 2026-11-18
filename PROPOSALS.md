@@ -11,6 +11,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   vulnerability, but they get no fixes. They come from tacplus' generated Rust, so the change belongs to the
   generator in tacplus-dev/tacplus (e.g. `backon` or tokio-retry for backoff, `rustls-pki-types`' PEM parsing for
   rustls-pemfile, a maintained YAML crate for serde_yaml), and this repository picks it up by regenerating.
+  On 2026-11-18 (nightly scan) the build's report also lists `chrono` 0.4.45 as unmaintained (RUSTSEC-2026-0543,
+  cargo-deny and osv-scanner, non-blocking, not new). In Cargo.lock it comes in through the generated chassis'
+  `logger`, `service_im` and `token`, and through `prost-wkt`/`prost-wkt-types` and `pbjson-types`. So it is the
+  generator's too (e.g. `jiff` or `time`).
 - **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11; 2026-11-06, #21; 2026-11-07, #22, where Jody asked for "Now" to name the floor in force): the floor moved to 2.5 (#11)
   and then 2.6, pinned in tacplus.lock (#21; tacplus.yaml, STATE.md), and the current release is v0.1.5, but
   ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4". ROADMAP.md is Jody's and loopers do not
@@ -32,6 +36,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   On 2026-11-15 it still pinned 2.6.1, eleven patches behind v2.6.12 (2026-11-14); 2.6 is still the newest line.
   On 2026-11-16 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line. No
   2.6 patch carries tacplus-dev/tacplus#368 yet (its backport tacplus-dev/tacplus#390 is unmerged).
+  On 2026-11-18 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line, and
+  tacplus-dev/tacplus#390 is still open.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -129,5 +135,17 @@ the looper then marks it `promoted` or `declined` here with the date.
   covered by #62's build-time upgrade. Jody's decision on #63 relies on the nightly turning these findings blocking
   once Debian fixes them, so a silent gap in the image scan would hide that. The pipeline (tacplus-dev/build,
   looper-scan) should either scan the release image on every build or say in the report that it did not.
+  On 2026-11-18 (nightly scan) the image scan is back: the report of 82098cb has 210 trivy findings in the base. But it
+  reads the `FROM` by name (`image debian:trixie-slim@sha256:a72b4433…`), not the image the Dockerfile builds. So
+  #62's build-time `apt-get upgrade`, which installs zlib1g `1+deb13u1`, is invisible to it, and CVE-2026-85091 fails
+  the policy on main again (#67). A scan of the built release image (trivy on the image `docker build` produced, as
+  looper#147 does for release jars) would report what ships, so a fix in the Dockerfile would count.
+- **The build's checks never read the launcher the release image ships** (2026-11-18, nightly scan, #68):
+  `release.yml` builds tacplus-dev/launcher from source at `LAUNCHER_COMMIT` and copies it into the image as PID 1.
+  The security checks scan this tree's lockfiles and the base by name, so a vulnerable launcher reaches every
+  release without a finding. The pinned d130eab7, built with go1.27.0, has 7 reachable stdlib advisories that only a
+  hand scan found. `looper-scan image` already runs `govulncheck -mode=binary` on the looper image's Go binaries
+  (looper#167). Running it on the release image's `/usr/local/bin` too, or on the launcher binaries before
+  `docker build`, would catch the next one. The pipeline is tacplus-dev/looper's.
 
 ## Promoted / declined
