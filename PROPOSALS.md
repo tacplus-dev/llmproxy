@@ -38,6 +38,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   2.6 patch carries tacplus-dev/tacplus#368 yet (its backport tacplus-dev/tacplus#390 is unmerged).
   On 2026-11-18 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line, and
   tacplus-dev/tacplus#390 is still open.
+  On 2026-11-21 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line, and
+  tacplus-dev/tacplus#390 is still open.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
