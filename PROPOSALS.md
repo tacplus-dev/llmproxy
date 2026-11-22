@@ -15,6 +15,9 @@ the looper then marks it `promoted` or `declined` here with the date.
   cargo-deny and osv-scanner, non-blocking, not new). In Cargo.lock it comes in through the generated chassis'
   `logger`, `service_im` and `token`, and through `prost-wkt`/`prost-wkt-types` and `pbjson-types`. So it is the
   generator's too (e.g. `jiff` or `time`).
+  On 2026-11-22 (#72) tacplus.lock moved to 2.6.13, whose generated httpclient no longer declares `backoff`
+  (tacplus-dev/tacplus#319): `backoff` and `instant` left Cargo.lock. `rustls-pemfile`, `unsafe-libyaml` and
+  `chrono` remain.
 - **ROADMAP.md still names tacplus floor 2.4** (2026-10-29, #11; 2026-11-06, #21; 2026-11-07, #22, where Jody asked for "Now" to name the floor in force): the floor moved to 2.5 (#11)
   and then 2.6, pinned in tacplus.lock (#21; tacplus.yaml, STATE.md), and the current release is v0.1.5, but
   ROADMAP.md's opening line says "Current line v0.1.0; tacplus floor 2.4". ROADMAP.md is Jody's and loopers do not
@@ -42,6 +45,9 @@ the looper then marks it `promoted` or `declined` here with the date.
   tacplus-dev/tacplus#390 is still open.
   On 2026-11-22 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line. The
   relock is #72, its land queued.
+  #72's first land came back red: 2.6.13's generated httpclient drops `backoff`, so `cargo build --locked` refused
+  the old Cargo.lock; the relock re-resolves it. 2.6.13 does not carry tacplus#368 (still open): the 22 cargo-deny
+  exceptions stay.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
