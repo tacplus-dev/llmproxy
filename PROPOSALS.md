@@ -40,6 +40,8 @@ the looper then marks it `promoted` or `declined` here with the date.
   tacplus-dev/tacplus#390 is still open.
   On 2026-11-21 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line, and
   tacplus-dev/tacplus#390 is still open.
+  On 2026-11-22 it still pinned 2.6.1, twelve patches behind v2.6.13 (2026-11-15); 2.6 is still the newest line. The
+  relock is #72, its land queued.
   ci.yml's header comment still says the gates "generate with tacplus at the floor tacplus.yaml declares"; it is
   the release tacplus.lock pins now (#21), and a looper cannot push a workflow change (no `workflows` permission).
 
@@ -151,5 +153,13 @@ the looper then marks it `promoted` or `declined` here with the date.
   `docker build`, would catch the next one. The pipeline is tacplus-dev/looper's. Since #68, release.yml runs
   `govulncheck -mode=binary` on the launcher binaries before `docker build` and fails the release on a finding: that
   catches it at a release, not between releases.
+- **The nightly scan should not file a non-blocking HIGH that has no fix** (2026-11-22, nightly scan, #73): Jody
+  closed #63 (2026-11-17 17:00Z) because "a HIGH with no fixed version is non-blocking", expecting the nightly
+  to file such a finding only when Debian ships the fix and it turns blocking. But the scan's rule
+  (tacplus-dev/looper#211) files every HIGH or CRITICAL finding that is not excepted and that no open issue names,
+  whether it blocks or not. So the 46 unfixed base-image findings of #63 came back tonight and needed #73, a parked
+  `needs-decision` issue that names them. If the rule filed HIGH and CRITICAL findings only when `fix` is true (or
+  `blocking`), Jody's #63 decision would hold without a parked issue. That change is tacplus-dev/looper's. The same
+  holds for gateway#39 and the fleet's other debian-based images.
 
 ## Promoted / declined
