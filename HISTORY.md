@@ -19,3 +19,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-17 looper issue Release image ships zlib1g 1:1.3.1-1+b1 (CVE-2026-85091 HIGH, blocking; CVE-2026-27171): the Dockerfile never applies Debian's fixed 1+deb13u1 (#62)
 - 2026-11-17 looper issue Security checks: 158 new non-blocking findings in the release image (Debian 13 base-package MEDIUM/LOW/UNKNOWN CVEs, DS-0026 no HEALTHCHECK) to fix or except (#64)
 - 2026-11-18 looper issue Release image's launcher is built from tacplus-dev/launcher d130eab7 with go1.27.0: 7 reachable stdlib advisories (GO-2026-6859 et al.); launcher v0.1.0 (toolchain go1.27.4) is clean (#68)
+- 2026-11-22 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.1 → 2.6.13, and 1 more) (#72)
