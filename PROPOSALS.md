@@ -167,5 +167,13 @@ the looper then marks it `promoted` or `declined` here with the date.
   `needs-decision` issue that names them. If the rule filed HIGH and CRITICAL findings only when `fix` is true (or
   `blocking`), Jody's #63 decision would hold without a parked issue. That change is tacplus-dev/looper's. The same
   holds for gateway#39 and the fleet's other debian-based images.
+- **release/0.1's backports wait unmerged, and its builds fail the security checks until #26 merges** (2026-11-23,
+  #75): ten backports are open against release/0.1 (#26, #59, #61, #65, #66, #70, #71, #74, #78, #79), the
+  oldest from #25. The build pipeline's run of #79 (https://gitlab.com/tacplus-dev/build/-/pipelines/3102848285, on
+  1bc4ca5) passed the gates but failed the security checks on 23 findings, none of them from the relock. They are the
+  22 `cargo-deny:unlicensed` findings on the crates tacplus generates and semgrep's missing `USER`. release/0.1 has no
+  security-exceptions.yaml and no `USER` line, and #26 brings both. Until #26 merges, every release/0.1 backport
+  builds red in the same way, and the patch they all name, v0.1.7, cannot be cut on the line either. Merging #26 first, then the rest in issue order, each rebased onto the one before, clears the queue.
+  Merging pull requests into a release branch is a member's step, not a looper's.
 
 ## Promoted / declined
