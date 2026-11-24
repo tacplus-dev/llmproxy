@@ -26,3 +26,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-23 looper release v0.2.0 (https://github.com/tacplus-dev/llmproxy/releases/tag/v0.2.0)
 - 2026-11-24 looper issue Release v0.2.0 from main: no release has #13's provider_model on GenerateCompletionResponse, which every doppelganger release calls (#80)
 - 2026-11-24 looper release v0.2.1 (https://github.com/tacplus-dev/llmproxy/releases/tag/v0.2.1)
+- 2026-11-24 looper issue Pinned images behind their lines: relock (Dockerfile: debian:trixie-slim → debian:trixie-slim) (#81)
