@@ -11,13 +11,11 @@ FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af6
 # outbound credential-bearing call in the whole fleet (see src/anthropic.rs).
 # libssl is already present in trixie-slim; ca-certificates is not.
 # The upgrade applies trixie-security's fixes the base tag does not carry yet,
-# at every image build (#62). zlib1g's fix is installed by version (#67): the
-# base digest ships 1+b1 (CVE-2026-85091), so a build either has 1+deb13u1 or
-# fails. Drop the pin with the digest move to a base that carries it.
+# at every image build (#62). The base digest carries zlib1g 1+deb13u1
+# (CVE-2026-85091, #67), so it needs no version pin of its own.
 RUN apt-get update -qq \
  && apt-get upgrade -y -qq --no-install-recommends \
  && apt-get install -y -qq --no-install-recommends ca-certificates \
-      zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
  && rm -rf /var/lib/apt/lists/*
 
 # llmproxy needs no root: it runs as a fixed UID/GID, not a useradd default, so

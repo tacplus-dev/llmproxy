@@ -40,14 +40,6 @@ image-upgrade:
   grep -A1 -E '^RUN apt-get update' Dockerfile | tail -n1 | grep -q 'apt-get upgrade -y' \
     || { echo "Dockerfile: the apt step must run 'apt-get upgrade' right after 'apt-get update' (#62)" >&2; exit 1; }
 
-# zlib1g is installed from trixie-security by version (#67): the pinned base ships 1+b1 (CVE-2026-85091), and a
-# version, unlike the upgrade, builds the same package every time or fails. It moves with the base digest.
-image-zlib:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  grep -A3 -E '^RUN apt-get update' Dockerfile | grep -qF 'zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1' \
-    || { echo "Dockerfile: the apt step must install zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 by version (#67)" >&2; exit 1; }
-
 # The release image's base is pinned by digest (#63): a move of the tag cannot change the image, and a base fix
 # arrives as a commit that moves the digest, which the build's security checks scan. Every FROM is (#64).
 image-base:
@@ -71,4 +63,4 @@ launcher:
     || { echo "$wf: the release must check the launcher's Go against its go.mod's toolchain line (#68)" >&2; exit 1; }
 
 # The gates every change passes before it is pushed.
-gates: image-user image-upgrade image-zlib image-base launcher test
+gates: image-user image-upgrade image-base launcher test
