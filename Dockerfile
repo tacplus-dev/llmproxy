@@ -6,7 +6,10 @@ FROM debian:trixie-slim
 # makes an outbound TLS call of its own to api.anthropic.com — the ONE
 # outbound credential-bearing call in the whole fleet (see src/anthropic.rs).
 # libssl is already present in trixie-slim; ca-certificates is not.
+# The upgrade applies trixie-security's fixes the base tag does not carry yet
+# (zlib1g 1+deb13u1, CVE-2026-85091: #62), at every image build.
 RUN apt-get update -qq \
+ && apt-get upgrade -y -qq --no-install-recommends \
  && apt-get install -y -qq --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
