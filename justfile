@@ -25,5 +25,13 @@ build: generate
 test: build
   cargo test --locked
 
+# The release image's base is pinned by digest (#63, #64): a tag moves under the same Dockerfile, so every FROM names
+# its image's sha256, and taking the base's fixes is a commit that moves the digest.
+image-base:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  unpinned="$(grep -E '^FROM ' Dockerfile | grep -vE '^FROM [^ ]+@sha256:[0-9a-f]{64}( |$)' || true)"
+  test -z "$unpinned" || { echo "Dockerfile: every FROM must be pinned by digest (name:tag@sha256:...), not: $unpinned (#63, #64)" >&2; exit 1; }
+
 # The gates every change passes before it is pushed.
-gates: test
+gates: image-base test

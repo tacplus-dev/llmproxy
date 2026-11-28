@@ -1,6 +1,9 @@
 # Public base, deliberately and visibly: tacplus-dev builds with nothing from a
 # private registry (PROVENANCE.md names the hardened base this replaces).
-FROM debian:trixie-slim
+# Pinned by digest, its multi-arch index (#64): the tag moves, so the same
+# Dockerfile would build on a different base. Taking the base's fixes is a commit
+# that moves the digest (the tag's current index, from the registry).
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 # The generated ServiceManager talks TLS to kernel, and this service also
 # makes an outbound TLS call of its own to api.anthropic.com — the ONE

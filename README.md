@@ -20,6 +20,10 @@ release and the build image, by digest, that every build runs (`ci/tacplus.sh` r
 patch arrives only as a commit that moves the lock: in the line's build image,
 `docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:$PWD" -w "$PWD" ghcr.io/tacplus-dev/tacplus/build:2.6 tacplus pin`.
 
+The release image's base is pinned the same way: the Dockerfile's `FROM` names `debian:trixie-slim` by the digest
+of its multi-arch index, and `just gates` fails on a `FROM` without one (#63, #64). The base's fixes arrive only as a
+commit that moves the digest to the tag's current index (`docker buildx imagetools inspect debian:trixie-slim`).
+
 ## Releasing
 
 llmproxy is released by version, and fleets pin a release line, `MAJOR.MINOR`, which is always that line's
