@@ -25,5 +25,12 @@ build: generate
 test: build
   cargo test --locked
 
+# The release image runs as the fixed non-root UID/GID the operator's securityContext names (#25).
+image-user:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  user="$(grep -E '^USER ' Dockerfile | tail -n1 | awk '{print $2}' || true)"
+  test "$user" = "65532:65532" || { echo "Dockerfile: the last USER must be 65532:65532, not '${user:-root}'" >&2; exit 1; }
+
 # The gates every change passes before it is pushed.
-gates: test
+gates: image-user test
