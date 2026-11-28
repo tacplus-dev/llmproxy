@@ -29,3 +29,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-24 looper issue Pinned images behind their lines: relock (Dockerfile: debian:trixie-slim → debian:trixie-slim) (#81)
 - 2026-11-24 looper issue Security checks fail on main: the pinned base debian:trixie-slim@a72b4433 ships zlib1g 1+b1 (CVE-2026-85091), which the scan reads by name; #62's build-time upgrade is invisible to it and no newer digest exists (#67)
 - 2026-11-28 looper issue ci.yml: workflow_dispatch, so the looper's nightly runs CI on each supported release line (#82)
+- 2026-11-28 looper issue rsa 0.9.10 (RUSTSEC-2023-0071, Marvin attack, no fix) via the generated chassis (#9)
